@@ -1918,8 +1918,7 @@ def validate_generated_site(rows):
 
         with open(path, "r", encoding="utf-8") as file:
             content = file.read()
-
-                checks = [
+        checks = [
             "Article",
             "persona-studio",
             "compatibility-status",
