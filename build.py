@@ -1,3 +1,4 @@
+```python
 #!/usr/bin/env python3
 """
 Character Persona Hub — Static Programmatic SEO Website Generator
@@ -21,7 +22,7 @@ import html
 import math
 import shutil
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict, Counter
 from urllib.parse import quote
 
@@ -51,7 +52,7 @@ RELATED_LIMIT = 8
 NEWEST_LIMIT = 30
 SITEMAP_LIMIT = 45000
 
-CURRENT_YEAR = datetime.utcnow().year
+CURRENT_YEAR = datetime.now(timezone.utc).year
 
 CSV_COLUMNS = [
     "slug", "title", "category", "subcategory", "target_keyword",
@@ -198,78 +199,237 @@ def make_directory():
 # ============================================================
 
 def read_csv():
+    """
+    Read data.csv without requiring a particular complete schema.
+
+    Existing CSV files are left untouched. Missing Character Persona Hub
+    fields are generated from whatever useful columns the CSV already has.
+    Common alternate column names are recognized automatically.
+    """
     if not os.path.isfile(DATA_FILE):
         raise FileNotFoundError(
             f"Missing {DATA_FILE}. Put data.csv beside build.py."
         )
 
-    rows = []
+    aliases = {
+        "slug": ("slug", "url_slug", "permalink", "id"),
+        "title": (
+            "title", "character_name", "persona_name", "name",
+            "character", "persona", "profile_name", "headline"
+        ),
+        "category": ("category", "genre", "archetype", "character_type", "type"),
+        "subcategory": (
+            "subcategory", "sub_category", "topic", "subgenre",
+            "sub_genre", "theme"
+        ),
+        "target_keyword": (
+            "target_keyword", "keyword", "primary_keyword",
+            "focus_keyword", "seo_keyword"
+        ),
+        "character_bio": (
+            "character_bio", "bio", "biography", "backstory",
+            "character_description", "profile", "about"
+        ),
+        "personality_traits": (
+            "personality_traits", "traits", "personality",
+            "character_traits", "attributes"
+        ),
+        "opening_line": (
+            "opening_line", "opening", "greeting", "first_message",
+            "opening_message", "intro", "dialogue", "starter"
+        ),
+        "description": (
+            "description", "meta_description", "short_description",
+            "summary", "excerpt"
+        ),
+        "tags": ("tags", "tag", "keywords", "labels"),
+        "faq_q1": ("faq_q1", "question_1", "faq_question_1"),
+        "faq_a1": ("faq_a1", "answer_1", "faq_answer_1"),
+        "faq_q2": ("faq_q2", "question_2", "faq_question_2"),
+        "faq_a2": ("faq_a2", "answer_2", "faq_answer_2"),
+        "upload_date": (
+            "upload_date", "date", "published", "published_at",
+            "created_at", "date_published"
+        ),
+    }
 
-    with open(DATA_FILE, "r", encoding="utf-8-sig", newline="") as file:
-        reader = csv.DictReader(file)
+    def normalize_header(value):
+        return re.sub(r"[^a-z0-9]+", "_", clean(value).lower()).strip("_")
 
-        if not reader.fieldnames:
-            raise ValueError("data.csv has no header row.")
-
-        missing = [c for c in CSV_COLUMNS if c not in reader.fieldnames]
-
-        if missing:
-            raise ValueError(
-                "Missing required CSV columns: " + ", ".join(missing)
+    def make_default_bio(title, category, subcategory, description, traits):
+        if description:
+            base = description.rstrip(".")
+            return (
+                f"{base}. {title} is a fictional {subcategory.lower()} "
+                f"character in the {category.lower()} category. "
+                f"The persona is designed as a flexible creative profile "
+                f"for storytelling and AI roleplay."
             )
+        trait_text = ", ".join(traits[:4])
+        return (
+            f"{title} is a fictional {category.lower()} character "
+            f"within the {subcategory.lower()} theme. "
+            f"This persona has a distinctive identity, a memorable "
+            f"background, and a conversational style shaped by "
+            f"{trait_text or 'a distinctive set of personality traits'}. "
+            f"Use this profile as a starting point for creative writing, "
+            f"character development, and interactive storytelling."
+        )
+
+    def make_default_opening(title, category, traits):
+        trait = traits[0].lower() if traits else "curious"
+        return (
+            f"Hey, I'm {title}. I hope you don't mind a little "
+            f"{trait} conversation. What brings you into my "
+            f"{category.lower()} world today?"
+        )
+
+    rows = []
+    with open(DATA_FILE, "r", encoding="utf-8-sig", newline="") as file:
+        sample = file.read(8192)
+        file.seek(0)
+
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+        except csv.Error:
+            dialect = csv.excel
+
+        reader = csv.DictReader(file, dialect=dialect)
+        if not reader.fieldnames:
+            raise ValueError(
+                "data.csv has no header row. Keep the first row as column names."
+            )
+
+        original_headers = list(reader.fieldnames)
+        header_lookup = {
+            normalize_header(header): header
+            for header in original_headers
+            if header is not None
+        }
 
         used_slugs = set()
 
         for line_number, raw in enumerate(reader, start=2):
-            row = {c: clean(raw.get(c, "")) for c in CSV_COLUMNS}
-
-            if not row["title"]:
-                print(f"Skipping row {line_number}: missing title.")
+            if not raw or not any(clean(v) for v in raw.values() if v is not None):
                 continue
 
-            original_slug = slugify(row["slug"] or row["title"])
+            source = {}
+            for canonical, names in aliases.items():
+                value = ""
+                for alias in names:
+                    actual_header = header_lookup.get(normalize_header(alias))
+                    if actual_header is not None:
+                        value = clean(raw.get(actual_header, ""))
+                        if value:
+                            break
+                source[canonical] = value
+
+            # If no recognized title header exists, use the first non-empty
+            # cell rather than rejecting an otherwise usable CSV row.
+            if not source["title"]:
+                for header in original_headers:
+                    if header is not None:
+                        candidate = clean(raw.get(header, ""))
+                        if candidate:
+                            source["title"] = candidate
+                            break
+
+            if not source["title"]:
+                print(
+                    f"      Skipping CSV row {line_number}: "
+                    "no character name or title found."
+                )
+                continue
+
+            title = source["title"]
+            category = source["category"] or "Original Characters"
+            subcategory = source["subcategory"] or category
+            target_keyword = source["target_keyword"] or (
+                f"{title} character persona"
+            )
+
+            traits = split_tags(source["personality_traits"])
+            if not traits:
+                traits = [
+                    "thoughtful", "engaging", "expressive",
+                    "imaginative", "adaptable"
+                ]
+
+            bio = source["character_bio"] or make_default_bio(
+                title, category, subcategory,
+                source["description"], traits
+            )
+
+            opening = source["opening_line"] or make_default_opening(
+                title, category, traits
+            )
+
+            description = source["description"] or truncate(
+                f"Meet {title}, a fictional {category.lower()} character "
+                f"persona with a {subcategory.lower()} theme. Explore the "
+                f"character background, personality traits, and opening "
+                f"dialogue, then customize the profile for creative writing "
+                f"and interactive storytelling.",
+                155
+            )
+
+            tags = split_tags(source["tags"])
+            if not tags:
+                tags = [category, subcategory] + traits[:3]
+
+            row = {
+                "slug": source["slug"],
+                "title": title,
+                "category": category,
+                "subcategory": subcategory,
+                "target_keyword": target_keyword,
+                "character_bio": bio,
+                "personality_traits": "|".join(traits),
+                "opening_line": opening,
+                "description": description,
+                "tags": "|".join(tags),
+                "faq_q1": source["faq_q1"] or f"What is the {title} character persona?",
+                "faq_a1": source["faq_a1"] or (
+                    f"{title} is a fictional {category.lower()} character "
+                    f"profile designed for creative writing and interactive storytelling."
+                ),
+                "faq_q2": source["faq_q2"] or f"Can I customize {title}?",
+                "faq_a2": source["faq_a2"] or (
+                    f"Yes. You can customize the character name, setting, "
+                    f"and interaction details in the persona studio."
+                ),
+                "upload_date": source["upload_date"] or datetime.now(timezone.utc).date().isoformat(),
+            }
+
+            original_slug = slugify(row["slug"] or title)
             slug = original_slug
             suffix = 2
-
             while slug in used_slugs:
                 slug = f"{original_slug}-{suffix}"
                 suffix += 1
-
             used_slugs.add(slug)
             row["slug"] = slug
 
-            row["category"] = row["category"] or "General Personas"
-            row["subcategory"] = (
-                row["subcategory"] or "Character Templates"
-            )
-
-            if not row["description"]:
-                row["description"] = (
-                    row["character_bio"][:250]
-                    or f"Explore the {row['title']} character persona."
-                )
-
             row["_tags"] = split_tags(row["tags"])
-            row["_traits"] = [
-                clean(t)
-                for t in row["personality_traits"].split("|")
-                if clean(t)
-            ]
+            row["_traits"] = split_tags(row["personality_traits"])
             row["_date"] = parse_date(row["upload_date"])
             row["_category_slug"] = slugify(row["category"])
             row["_subcategory_slug"] = slugify(row["subcategory"])
-            row["_tag_slugs"] = [
-                slugify(tag) for tag in row["_tags"]
-            ]
+            row["_tag_slugs"] = [slugify(tag) for tag in row["_tags"]]
 
             rows.append(row)
 
     if not rows:
-        raise ValueError("data.csv contains no usable character personas.")
+        raise ValueError(
+            "data.csv contains no usable rows. Make sure it has a header "
+            "and at least one row with a character title or name."
+        )
 
+    print(
+        "      CSV compatibility: automatic defaults enabled; "
+        "your data.csv was not modified."
+    )
     return rows
-
-
 # ============================================================
 # CSS
 # ============================================================
@@ -884,17 +1044,16 @@ def footer():
 
 <h3>Explore Our Other Projects</h3>
 <p>Discover more tools and creative resources from our network.</p>
-<div class="network-links">
-{network_html}
-</div>
+<div class="network-links">{network_html}</div>
 
 <p>
-&copy; <span class="live-year">{CURRENT_YEAR}</span>
+© <span class="live-year">{CURRENT_YEAR}</span>
 {esc(SITE_NAME)}. All rights reserved.
 </p>
 <p>
-Independent fictional character-template directory.
-All characters and scenarios are fictional.
+All character personas are fictional creative concepts.
+Users are responsible for complying with the terms of their
+chosen AI platform.
 </p>
 </div>
 </footer>
@@ -914,40 +1073,41 @@ def page_shell(title, description, canonical, content, page_type="website"):
 
 
 # ============================================================
-# PERSONA CARDS
+# CARD COMPONENT
 # ============================================================
 
 def persona_card(row):
     tags = " ".join(row["_tags"])
+    traits = " ".join(row["_traits"][:3])
 
     return f"""
-<article class="persona-card"
- data-persona-card
+<article class="persona-card" data-persona-card
  data-title="{esc(row['title'])}"
  data-keyword="{esc(row['target_keyword'])}"
  data-tags="{esc(tags)}">
- <div class="card-category">{esc(row['category'])}</div>
- <h3><a href="{BASE_URL}/persona/{quote(row['slug'])}.html">
- {esc(row['title'])}</a></h3>
- <p>{esc(truncate(row['description'], 135))}</p>
- <div class="card-meta">
- <span class="pill">{esc(row['subcategory'])}</span>
- {''.join(f'<span class="pill">{esc(t)}</span>' for t in row['_tags'][:2])}
- </div>
- <a class="card-link" href="{BASE_URL}/persona/{quote(row['slug'])}.html">
- Explore Character &rarr;
- </a>
+    <div class="card-category">{esc(row['category'])}</div>
+    <h3><a href="/persona/{quote(row['slug'])}.html">{esc(row['title'])}</a></h3>
+    <p>{esc(truncate(row['description'], 135))}</p>
+    <div class="card-meta">
+        <span class="pill">{esc(row['subcategory'])}</span>
+        <span class="pill trait-pill">{esc(traits or 'Creative persona')}</span>
+    </div>
+    <a class="card-link" href="/persona/{quote(row['slug'])}.html">
+        Explore Character →
+    </a>
 </article>
 """
 
 
-def cards_grid(rows):
-    if not rows:
-        return '<div class="empty-state">No character personas found.</div>'
-
-    return '<div class="grid">' + "".join(
-        persona_card(row) for row in rows
-    ) + "</div>"
+def section_heading(title, subtitle=""):
+    return f"""
+<div class="section-heading">
+    <div>
+        <h2>{esc(title)}</h2>
+        <p>{esc(subtitle)}</p>
+    </div>
+</div>
+"""
 
 
 # ============================================================
@@ -956,675 +1116,457 @@ def cards_grid(rows):
 
 def build_homepage(rows):
     categories = defaultdict(list)
-    subcategories = defaultdict(list)
-    tags = defaultdict(list)
+    tags = defaultdict(int)
 
     for row in rows:
         categories[row["category"]].append(row)
-        subcategories[row["subcategory"]].append(row)
-
         for tag in row["_tags"]:
-            tags[tag].append(row)
+            tags[tag] += 1
 
-    newest = sorted(
-        rows, key=lambda r: r["_date"], reverse=True
-    )[:NEWEST_LIMIT]
+    newest = sorted(rows, key=lambda r: r["_date"], reverse=True)[:NEWEST_LIMIT]
+    featured = newest[:12]
 
     category_cards = []
 
-    for category in sorted(categories, key=str.lower):
-        items = categories[category]
-        category_cards.append(f"""
-<a class="hub-card"
- href="{BASE_URL}/category/{slugify(category)}/page-1.html">
- <strong>{esc(category)}</strong>
- <span class="count">{len(items)} personas</span>
-</a>
-""")
-
-    subcategory_cards = []
-
-    for name in sorted(subcategories, key=str.lower):
-        items = subcategories[name]
-        subcategory_cards.append(f"""
-<a class="subcategory-pill"
- href="{BASE_URL}/topic/{slugify(name)}.html">
- {esc(name)} ({len(items)})
-</a>
-""")
-
-    tag_cards = []
-
-    for tag, items in sorted(
-        tags.items(),
-        key=lambda item: (-len(item[1]), item[0].lower())
+    for category, items in sorted(
+        categories.items(),
+        key=lambda pair: (-len(pair[1]), pair[0].lower())
     ):
-        tag_cards.append(
-            f'<a href="{BASE_URL}/tag/{slugify(tag)}.html">'
-            f'{esc(tag)} <span class="count">({len(items)})</span></a>'
+        category_cards.append(f"""
+<a class="hub-card" href="/category/{slugify(category)}/page-1.html">
+    <strong>{esc(category)}</strong>
+    <span class="count">{len(items)} personas</span>
+</a>
+""")
+
+    tag_links = []
+
+    for tag, count in sorted(
+        tags.items(), key=lambda pair: (-pair[1], pair[0].lower())
+    )[:35]:
+        tag_links.append(
+            f'<a href="/tag/{slugify(tag)}.html">'
+            f'{esc(tag)} <span>({count})</span></a>'
         )
 
     content = f"""
 <main>
 <section class="hero">
 <div class="container">
-<span class="eyebrow">The Character Creation Library</span>
-<h1>Build Your Next <span class="gradient-text">
-Unforgettable AI Character</span></h1>
+<span class="eyebrow">The Character Discovery Library</span>
+<h1>Discover Your Next <span class="gradient-text">Character Persona</span></h1>
 <p>
-Explore fictional AI companion character cards, personality
-templates, conversation starters, and interactive persona studios.
-Find a character concept and customize it instantly.
+Explore fictional character profiles, personality archetypes,
+backstories, and opening lines. Find a persona for creative writing,
+roleplay, and interactive storytelling.
 </p>
+
 <div class="search-wrap">
-<span class="search-icon">&#9906;</span>
-<input id="persona-search" class="search-input"
- type="search" placeholder="Search characters, keywords, tags..."
+<span class="search-icon">⌕</span>
+<input class="search-input" id="persona-search"
+ type="search" placeholder="Search characters, traits, or keywords..."
  aria-label="Search character personas">
 </div>
 <p id="search-count">{len(rows)} personas available</p>
 </div>
 </section>
 
-<section class="section" id="categories">
 <div class="container">
-<div class="section-heading">
-<div>
-<h2>Browse Persona Archetypes</h2>
-<p>Explore every character category and its complete collection.</p>
-</div>
-</div>
-<div class="grid">{''.join(category_cards)}</div>
-</div>
-</section>
-
-<section class="section">
-<div class="container">
-<div class="section-heading">
-<div>
-<h2>Explore Character Topics</h2>
-<p>Discover specialized character templates.</p>
-</div>
-</div>
-<div class="tag-cloud">{''.join(subcategory_cards)}</div>
-</div>
-</section>
-
-<section class="section">
-<div class="container">
-<div class="section-heading">
-<div>
-<h2>Popular Character Tags</h2>
-<p>Browse the library by personality and theme.</p>
-</div>
-</div>
-<div class="tag-cloud">{''.join(tag_cards)}</div>
-</div>
-</section>
-
 <section class="section" id="newest">
-<div class="container">
-<div class="section-heading">
-<div>
-<h2>Discover Character Personas</h2>
-<p>Browse the newest {len(newest)} character concepts in the library.</p>
+{section_heading("Featured Character Personas", "Explore recently added fictional profiles.")}
+<div class="grid">
+{''.join(persona_card(row) for row in featured)}
 </div>
-</div>
-{cards_grid(newest)}
+</section>
+
+<section class="section" id="categories">
+{section_heading("Browse Character Archetypes", "Explore the library by category.")}
+<div class="grid">
+{''.join(category_cards)}
 </div>
 </section>
 
 <section class="section">
-<div class="container">
-<div class="panel">
-<h2>What Is Character Persona Hub?</h2>
-<p>
-Character Persona Hub is a searchable collection of fictional
-character profiles and AI conversation templates. Each character
-page provides a customizable biography, personality traits,
-opening dialogue, copy-ready system prompt, and synthesized
-ambient audio.
-</p>
-<p>
-Customize character names, settings, and interaction partners
-to create reusable creative roleplay concepts.
-</p>
-</div>
+{section_heading("Popular Character Tags", "Discover personas by their defining themes and traits.")}
+<div class="tag-cloud">
+{''.join(tag_links)}
 </div>
 </section>
+
+<section class="section">
+{section_heading("Build a Character That Feels Original", "A flexible starting point for your next creative project.")}
+<div class="panel">
+<p>
+Every persona includes a fictional background, personality traits,
+and an opening line. Use the character studio on each profile to
+customize names, settings, and dialogue before copying the prompt
+into your preferred writing or AI platform.
+</p>
+</div>
+</section>
+</div>
 </main>
 """
 
     return page_shell(
-        f"{SITE_NAME} | AI Companion Character Cards & Persona Templates",
-        "Discover and customize fictional AI companion character cards, "
-        "personality templates, dialogue hooks and creative persona prompts.",
+        f"{SITE_NAME} | Discover Fictional Character Personas",
+        "Explore fictional character personas, personality archetypes, "
+        "backstories, opening lines, and creative roleplay profiles.",
         absolute_url("/"),
         content
     )
 
 
 # ============================================================
-# STRUCTURED DATA
+# CHARACTER DETAIL PAGE
 # ============================================================
 
-def make_detail_schema(row):
-    canonical = absolute_url(
-        f"/persona/{quote(row['slug'])}.html"
+def related_personas(row, all_rows):
+    candidates = [
+        item for item in all_rows
+        if item["slug"] != row["slug"]
+        and (
+            item["category"] == row["category"]
+            or item["subcategory"] == row["subcategory"]
+            or set(item["_tag_slugs"]) & set(row["_tag_slugs"])
+        )
+    ]
+
+    candidates.sort(
+        key=lambda item: (
+            item["category"] != row["category"],
+            item["subcategory"] != row["subcategory"],
+            item["title"].lower()
+        )
     )
 
-    article = {
-        "@context": "https://schema.org",
-        "@type": "Article",
-        "headline": row["title"],
-        "description": truncate(row["description"], 250),
-        "mainEntityOfPage": canonical,
-        "author": {"@type": "Organization", "name": SITE_NAME},
-        "publisher": {"@type": "Organization", "name": SITE_NAME},
-        "datePublished": (
-            row["_date"].date().isoformat()
-            if row["_date"] != datetime.min else None
-        ),
-        "dateModified": datetime.utcnow().date().isoformat(),
-        "articleSection": row["category"],
-        "keywords": row["target_keyword"],
-    }
+    return candidates[:RELATED_LIMIT]
 
-    breadcrumb = {
+
+def build_detail_page(row, all_rows):
+    traits_html = "".join(
+        f'<span class="pill trait-pill">{esc(trait)}</span>'
+        for trait in row["_traits"]
+    )
+
+    tags_html = "".join(
+        f'<a href="/tag/{slugify(tag)}.html">{esc(tag)}</a>'
+        for tag in row["_tags"]
+    )
+
+    related = related_personas(row, all_rows)
+
+    faq_schema = {
         "@context": "https://schema.org",
-        "@type": "BreadcrumbList",
-        "itemListElement": [
+        "@type": "FAQPage",
+        "mainEntity": [
             {
-                "@type": "ListItem",
-                "position": 1,
-                "name": "Home",
-                "item": absolute_url("/")
+                "@type": "Question",
+                "name": row["faq_q1"],
+                "acceptedAnswer": {
+                    "@type": "Answer",
+                    "text": row["faq_a1"]
+                }
             },
             {
-                "@type": "ListItem",
-                "position": 2,
-                "name": row["category"],
-                "item": absolute_url(
-                    f"/category/{row['_category_slug']}/page-1.html"
-                )
-            },
-            {
-                "@type": "ListItem",
-                "position": 3,
-                "name": row["title"],
-                "item": canonical
+                "@type": "Question",
+                "name": row["faq_q2"],
+                "acceptedAnswer": {
+                    "@type": "Answer",
+                    "text": row["faq_a2"]
+                }
             }
         ]
     }
 
-    faq_entities = []
-
-    for question, answer in [
-        (row["faq_q1"], row["faq_a1"]),
-        (row["faq_q2"], row["faq_a2"])
-    ]:
-        if question and answer:
-            faq_entities.append({
-                "@type": "Question",
-                "name": question,
-                "acceptedAnswer": {
-                    "@type": "Answer",
-                    "text": answer
-                }
-            })
-
-    schemas = [article, breadcrumb]
-
-    if faq_entities:
-        schemas.append({
-            "@context": "https://schema.org",
-            "@type": "FAQPage",
-            "mainEntity": faq_entities
-        })
-
-    return "\n".join(
-        '<script type="application/ld+json">'
-        + safe_json(schema)
-        + '</script>'
-        for schema in schemas
-    )
-
-
-# ============================================================
-# RELATED PERSONAS
-# ============================================================
-
-def get_related(row, rows):
-    candidates = []
-    current_tags = set(row["_tag_slugs"])
-
-    for other in rows:
-        if other["slug"] == row["slug"]:
-            continue
-
-        same_subcategory = (
-            other["_subcategory_slug"] == row["_subcategory_slug"]
+    article_schema = {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        "headline": row["title"],
+        "description": row["description"],
+        "datePublished": row["upload_date"],
+        "dateModified": row["upload_date"],
+        "author": {
+            "@type": "Organization",
+            "name": SITE_NAME
+        },
+        "publisher": {
+            "@type": "Organization",
+            "name": SITE_NAME
+        },
+        "mainEntityOfPage": absolute_url(
+            f"/persona/{quote(row['slug'])}.html"
         )
-        shared_tags = len(
-            current_tags.intersection(set(other["_tag_slugs"]))
-        )
-        same_category = (
-            other["_category_slug"] == row["_category_slug"]
-        )
-
-        score = (
-            shared_tags * 4
-            + (5 if same_subcategory else 0)
-            + (2 if same_category else 0)
-        )
-
-        candidates.append((score, other["_date"], other))
-
-    candidates.sort(
-        key=lambda item: (item[0], item[1]),
-        reverse=True
-    )
-
-    return [item[2] for item in candidates[:RELATED_LIMIT]]
-
-
-# ============================================================
-# DETAIL PAGES
-# ============================================================
-
-def build_detail_page(row, rows):
-    related = get_related(row, rows)
-
-    traits = row["_traits"] or [
-        "Creative", "Expressive", "Thoughtful",
-        "Adaptable", "Imaginative"
-    ]
-
-    traits_html = "".join(
-        f'<span class="trait-pill">{esc(trait)}</span>'
-        for trait in traits
-    )
-
-    tags_html = "".join(
-        f'<a class="pill" href="{BASE_URL}/tag/{slugify(tag)}.html">'
-        f'{esc(tag)}</a>'
-        for tag in row["_tags"]
-    )
-
-    faq_html = ""
-
-    for question, answer in [
-        (row["faq_q1"], row["faq_a1"]),
-        (row["faq_q2"], row["faq_a2"])
-    ]:
-        if question and answer:
-            faq_html += f"""
-<div class="faq-item">
-<h3>{esc(question)}</h3>
-<p>{esc(answer)}</p>
-</div>
-"""
-
-    title = row["title"]
-    description = row["description"]
-    canonical = absolute_url(
-        f"/persona/{quote(row['slug'])}.html"
-    )
-
-    studio_attributes = (
-        f'data-bio="{esc(row["character_bio"])}" '
-        f'data-opening="{esc(row["opening_line"])}" '
-        f'data-title="{esc(title)}"'
-    )
+    }
 
     content = f"""
 <main class="container">
-<div class="breadcrumbs">
-<a href="{BASE_URL}/">Home</a> /
-<a href="{BASE_URL}/category/{row['_category_slug']}/page-1.html">
-{esc(row['category'])}</a> / {esc(title)}
-</div>
+<nav class="breadcrumbs">
+<a href="/">Home</a> /
+<a href="/category/{row['_category_slug']}/page-1.html">{esc(row['category'])}</a> /
+{esc(row['title'])}
+</nav>
 
 <section class="detail-hero">
-<span class="eyebrow">{esc(row['category'])}</span>
-<h1>{esc(title)}</h1>
-<p>{esc(description)}</p>
-<div class="card-meta">
-<span class="pill">{esc(row['subcategory'])}</span>
-{tags_html}
-</div>
-<p><span class="status-badge compatibility-status">
-Compatibility Verified: {datetime.utcnow().strftime("%B %Y")}
-</span></p>
+<span class="eyebrow">{esc(row['category'])} / {esc(row['subcategory'])}</span>
+<h1>{esc(row['title'])} Character Persona</h1>
+<p>{esc(row['description'])}</p>
+<span class="status-badge compatibility-status">
+Compatibility Verified: {CURRENT_YEAR}
+</span>
 </section>
 
 <div class="detail-grid">
 <div>
+<section class="panel">
+<h2>Character Biography</h2>
+<p>{esc(row['character_bio'])}</p>
+</section>
 
-<section class="panel" id="persona-studio" {studio_attributes}>
-<h2>Interactive Persona Customizer</h2>
-<p>
-Personalize this character's identity, interaction partner,
-and fictional environment. Your changes update the character
-profile and opening dialogue instantly.
-</p>
+<section class="panel">
+<h2>Personality Traits</h2>
+<div class="traits">{traits_html}</div>
+</section>
+
+<section class="panel">
+<h2>Opening Line</h2>
+<p class="prompt-output">{esc(row['opening_line'])}</p>
+</section>
+
+<section class="panel" id="persona-studio"
+ data-title="{esc(row['title'])}"
+ data-bio="{esc(row['character_bio'])}"
+ data-opening="{esc(row['opening_line'])}">
+<h2>Interactive Persona Studio</h2>
+<p>Personalize this fictional character profile before copying it.</p>
 
 <div class="customizer-grid">
 <div class="field">
-<label for="character-name">Character Name</label>
-<input id="character-name" type="text"
- value="{esc(title)}" maxlength="100">
+<label for="character-name">Character name</label>
+<input id="character-name" value="{esc(row['title'])}">
 </div>
 <div class="field">
-<label for="user-name">User Name</label>
-<input id="user-name" type="text"
- placeholder="Your name" maxlength="100">
+<label for="user-name">Your name</label>
+<input id="user-name" placeholder="Enter your name">
 </div>
 <div class="field">
-<label for="character-setting">Setting</label>
-<input id="character-setting" type="text"
- placeholder="Enter a fictional setting" maxlength="200">
+<label for="character-setting">Story setting</label>
+<input id="character-setting" placeholder="A mysterious new place">
 </div>
 </div>
 
-<h3>Customized Character Biography</h3>
+<h3>Customized Biography</h3>
 <div class="prompt-output" id="custom-bio"></div>
+
 <h3>Customized Opening Line</h3>
 <div class="prompt-output" id="custom-opening"></div>
-</section>
 
-<section class="panel">
-<h2>Trait Badge Matrix</h2>
-<div class="traits">{traits_html}</div>
 <div class="button-row">
-<button class="action-btn" id="randomize-quirk">
-Randomize Bonus Quirk
-</button>
+<button class="action-btn" id="copy-greeting">Copy Opening Line</button>
 </div>
-<p><strong>Bonus Quirk:</strong>
-<span id="bonus-quirk">Discover a surprise character detail.</span></p>
-</section>
 
-<section class="panel">
-<h2>Copy-Ready Character System Prompt</h2>
-<p>
-Use the generated system prompt in a compatible AI conversation
-platform. Customize the profile before copying.
-</p>
+<h3>System Prompt</h3>
+<div class="prompt-output" id="system-prompt"></div>
 <div class="button-row">
-<button class="primary-btn" id="copy-system">Copy System Prompt</button>
-<button class="action-btn" id="copy-greeting">Copy Opening Greeting</button>
+<button class="primary-btn" id="copy-system">Copy Character Prompt</button>
 <span class="token-badge" id="token-count">Calculating...</span>
 </div>
-<h3>System Prompt Preview</h3>
-<div class="prompt-output" id="system-prompt"></div>
-<h3>Opening Greeting Preview</h3>
-<div class="prompt-output" id="greeting-prompt"></div>
 </section>
 
 <section class="panel">
-<h2>Character Mood Ambience</h2>
-<p>
-Generate lightweight atmospheric background audio directly
-in your browser using the Web Audio API.
-</p>
-<div class="audio-controls">
-<button class="action-btn" id="ambience-toggle">▶ Play Ambience</button>
-<select id="sound-mode" aria-label="Sound mode">
-<option value="rain">Midnight Rain</option>
-<option value="velvet">Soft Velvet Hum</option>
-<option value="cafe">Cozy Cafe Murmur</option>
-</select>
-<label for="sound-volume">Volume</label>
-<input type="range" id="sound-volume" min="0" max="100" value="25">
+<h2>Character Quirk Generator</h2>
+<p>Give this persona one extra fictional detail.</p>
+<div class="prompt-output" id="bonus-quirk">
+Select the button to generate a character quirk.
+</div>
+<div class="button-row">
+<button class="action-btn" id="randomize-quirk">Generate Random Quirk</button>
 </div>
 </section>
 
-<!-- AD_SLOT_MID_CONTENT -->
-
 <section class="panel">
-<h2>About This Character Persona</h2>
-<p>{esc(description)}</p>
-<h3>Character Background</h3>
-<p>{esc(row['character_bio'])}</p>
-<h3>Personality Characteristics</h3>
-<div class="traits">{traits_html}</div>
-<h3>Opening Dialogue</h3>
-<p>{esc(row['opening_line'])}</p>
+<h2>Ambient Sound Studio</h2>
+<p>Optional locally generated ambient sound for your writing session.</p>
+<div class="audio-controls">
+<select id="sound-mode" aria-label="Ambient sound mode">
+<option value="rain">Soft Rain</option>
+<option value="velvet">Velvet Atmosphere</option>
+<option value="dream">Dreamlike Tones</option>
+</select>
+<label for="sound-volume">Volume</label>
+<input id="sound-volume" type="range" min="0" max="100" value="25">
+<button class="action-btn" id="ambience-toggle">▶ Play Ambience</button>
+</div>
+</section>
+
+<section class="affiliate-card">
+<h2>Take Your Character Further</h2>
+<p>
+Use this character card as a creative starting point for your
+favorite compatible writing or AI voice companion platform.
+</p>
+<a class="primary-btn" href="{esc(AFFILIATE_URL)}"
+ target="_blank" rel="nofollow sponsored noopener">
+{esc(AFFILIATE_CTA_TEXT)}
+</a>
 </section>
 
 <section class="panel">
 <h2>Frequently Asked Questions</h2>
-{faq_html if faq_html else '<p>Explore the character sheet to learn more about this fictional persona.</p>'}
+<div class="faq-item">
+<h3>{esc(row['faq_q1'])}</h3>
+<p>{esc(row['faq_a1'])}</p>
+</div>
+<div class="faq-item">
+<h3>{esc(row['faq_q2'])}</h3>
+<p>{esc(row['faq_a2'])}</p>
+</div>
 </section>
 
+<section class="panel">
+<h2>Explore Character Tags</h2>
+<div class="tag-cloud">{tags_html}</div>
+</section>
 </div>
 
 <aside>
 <section class="panel">
-<h2>Character Information</h2>
-<p><strong>Category:</strong><br>{esc(row['category'])}</p>
-<p><strong>Subcategory:</strong><br>{esc(row['subcategory'])}</p>
-<p><strong>Primary Keyword:</strong><br>{esc(row['target_keyword'])}</p>
-<p><strong>Published:</strong><br>{esc(row['upload_date'] or 'Evergreen collection')}</p>
-<p><strong>Traits:</strong><br>{len(traits)}</p>
-<p><strong>Tags:</strong><br>{len(row['_tags'])}</p>
+<h2>Character Details</h2>
+<p><strong>Category:</strong> {esc(row['category'])}</p>
+<p><strong>Subcategory:</strong> {esc(row['subcategory'])}</p>
+<p><strong>Updated:</strong> {esc(row['upload_date'])}</p>
+<p><strong>Target keyword:</strong> {esc(row['target_keyword'])}</p>
 </section>
 
-<section class="affiliate-card">
-<h2>Bring This Character to Life</h2>
-<p>
-Take this customized character concept into a compatible
-AI voice companion platform and explore voice-enabled
-character interactions.
-</p>
-<a class="primary-btn" href="{esc(AFFILIATE_URL)}"
- rel="nofollow sponsored noopener" target="_blank">
-{esc(AFFILIATE_CTA_TEXT)}
-</a>
+<section class="panel">
+<h2>Related Personas</h2>
+{''.join(persona_card(item) for item in related)
+ or '<p>No related personas yet.</p>'}
 </section>
 </aside>
 </div>
-
-<section class="section">
-<div class="section-heading">
-<div>
-<h2>Related Character Personas</h2>
-<p>Explore similar characters based on shared themes and traits.</p>
-</div>
-</div>
-{cards_grid(related)}
-</section>
 </main>
+
+<script type="application/ld+json">{safe_json(article_schema)}</script>
+<script type="application/ld+json">{safe_json(faq_schema)}</script>
 """
 
-    content += make_detail_schema(row)
-
     return page_shell(
-        f"{title} | Character Persona Template | {SITE_NAME}",
-        description,
-        canonical,
+        f"{row['title']} Character Persona | {SITE_NAME}",
+        row["description"],
+        absolute_url(f"/persona/{quote(row['slug'])}.html"),
         content,
         "article"
     )
 
 
 # ============================================================
-# CATEGORY HUBS WITH PAGINATION
+# CATEGORY, TOPIC, AND TAG HUBS
 # ============================================================
 
 def build_category_hubs(rows):
     groups = defaultdict(list)
 
     for row in rows:
-        groups[row["category"]].append(row)
+        groups[row["_category_slug"]].append(row)
 
-    for category, items in groups.items():
-        items.sort(key=lambda r: r["_date"], reverse=True)
-
+    for category_slug, items in groups.items():
+        category = items[0]["category"]
+        items.sort(key=lambda item: item["title"].lower())
         total_pages = max(1, math.ceil(len(items) / ITEMS_PER_PAGE))
-        category_slug = slugify(category)
 
-        for page_number in range(1, total_pages + 1):
-            start = (page_number - 1) * ITEMS_PER_PAGE
+        for page in range(1, total_pages + 1):
+            start = (page - 1) * ITEMS_PER_PAGE
             page_items = items[start:start + ITEMS_PER_PAGE]
 
-            current_path = (
-                f"/category/{category_slug}/page-{page_number}.html"
-            )
-            canonical = absolute_url(current_path)
+            pagination = []
 
-            title = (
-                f"{category} Character Personas"
-                + (f" | Page {page_number}" if page_number > 1 else "")
-            )
-
-            description = (
-                f"Browse {len(items)} fictional {category.lower()} "
-                f"character personas, AI companion templates, "
-                f"personality profiles, and dialogue starters."
-            )
-
-            navigation = []
-            extra_links = ""
-
-            # Compute URLs separately to avoid nested f-string issues.
-            prev_url = None
-            next_url = None
-
-            if page_number > 1:
-                prev_url = absolute_url(
-                    f"/category/{category_slug}/page-{page_number - 1}.html"
+            for page_number in range(1, total_pages + 1):
+                pagination.append(
+                    f'<a href="/category/{category_slug}/page-{page_number}.html">'
+                    f'{page_number}</a>'
                 )
-                navigation.append(
-                    f'<a href="{esc(prev_url)}" rel="prev">Previous</a>'
-                )
-                extra_links += (
-                    f'<link rel="prev" href="{esc(prev_url)}">'
-                )
-
-            if page_number < total_pages:
-                next_url = absolute_url(
-                    f"/category/{category_slug}/page-{page_number + 1}.html"
-                )
-                navigation.append(
-                    f'<a href="{esc(next_url)}" rel="next">Next</a>'
-                )
-                extra_links += (
-                    f'<link rel="next" href="{esc(next_url)}">'
-                )
-
-            pagination = (
-                '<div class="pagination">'
-                + "".join(navigation)
-                + "</div>"
-            )
 
             content = f"""
 <main class="container section">
-<div class="breadcrumbs">
-<a href="{BASE_URL}/">Home</a> / {esc(category)}
+<nav class="breadcrumbs"><a href="/">Home</a> / {esc(category)}</nav>
+{section_heading(category + " Character Personas", f"Browse {len(items)} fictional character profiles in this category.")}
+<div class="grid">
+{''.join(persona_card(item) for item in page_items)}
 </div>
-<span class="eyebrow">Persona Archetype</span>
-<h1>{esc(title)}</h1>
-<p>{esc(description)}</p>
-<p class="count">{len(items)} total character personas</p>
-{cards_grid(page_items)}
-{pagination}
+<div class="pagination">{''.join(pagination)}</div>
 </main>
 """
 
-            page = page_shell(
-                f"{title} | {SITE_NAME}",
-                description,
-                canonical,
-                content
+            path = os.path.join(
+                OUTPUT_DIR, "category", category_slug,
+                f"page-{page}.html"
             )
-
-            page = page.replace("</head>", extra_links + "\n</head>")
 
             write_file(
-                os.path.join(
-                    OUTPUT_DIR, "category", category_slug,
-                    f"page-{page_number}.html"
-                ),
-                page
+                path,
+                page_shell(
+                    f"{category} Personas — Page {page} | {SITE_NAME}",
+                    f"Explore {len(items)} fictional {category.lower()} character personas.",
+                    absolute_url(f"/category/{category_slug}/page-{page}.html"),
+                    content
+                )
             )
 
-
-# ============================================================
-# SUBCATEGORY HUBS
-# ============================================================
 
 def build_topic_hubs(rows):
     groups = defaultdict(list)
 
     for row in rows:
-        groups[row["subcategory"]].append(row)
+        groups[row["_subcategory_slug"]].append(row)
 
-    for name, items in groups.items():
-        items.sort(key=lambda r: r["_date"], reverse=True)
-        topic_slug = slugify(name)
-
-        description = (
-            f"Explore {len(items)} fictional character templates "
-            f"in the {name} collection, including AI companion "
-            f"personas and reusable dialogue prompts."
-        )
+    for topic_slug, items in groups.items():
+        topic = items[0]["subcategory"]
 
         content = f"""
 <main class="container section">
-<div class="breadcrumbs">
-<a href="{BASE_URL}/">Home</a> / Topics / {esc(name)}
+<nav class="breadcrumbs"><a href="/">Home</a> / {esc(topic)}</nav>
+{section_heading(topic + " Character Personas", f"Explore fictional profiles related to {topic.lower()}.")}
+<div class="grid">
+{''.join(persona_card(item) for item in items)}
 </div>
-<span class="eyebrow">Character Topic</span>
-<h1>{esc(name)} Character Templates</h1>
-<p>{esc(description)}</p>
-{cards_grid(items)}
 </main>
 """
 
         write_file(
             os.path.join(OUTPUT_DIR, "topic", topic_slug + ".html"),
             page_shell(
-                f"{name} Character Templates | {SITE_NAME}",
-                description,
+                f"{topic} Character Personas | {SITE_NAME}",
+                f"Discover fictional character personas in the {topic.lower()} theme.",
                 absolute_url(f"/topic/{topic_slug}.html"),
                 content
             )
         )
 
 
-# ============================================================
-# TAG HUBS
-# ============================================================
-
 def build_tag_hubs(rows):
     groups = defaultdict(list)
 
     for row in rows:
         for tag in row["_tags"]:
-            groups[tag].append(row)
+            groups[slugify(tag)].append(row)
 
-    for tag, items in groups.items():
-        items.sort(key=lambda r: r["_date"], reverse=True)
-        tag_slug = slugify(tag)
-
-        description = (
-            f"Browse {len(items)} character personas tagged "
-            f"{tag}, including fictional personality templates "
-            f"and conversation starters."
+    for tag_slug, items in groups.items():
+        tag = next(
+            (
+                value for row in items for value in row["_tags"]
+                if slugify(value) == tag_slug
+            ),
+            tag_slug.replace("-", " ").title()
         )
 
         content = f"""
 <main class="container section">
-<div class="breadcrumbs">
-<a href="{BASE_URL}/">Home</a> / Tags / {esc(tag)}
+<nav class="breadcrumbs"><a href="/">Home</a> / Tag: {esc(tag)}</nav>
+{section_heading("Character Personas Tagged " + tag, f"Explore fictional personas associated with {tag.lower()}.")}
+<div class="grid">
+{''.join(persona_card(item) for item in items)}
 </div>
-<span class="eyebrow">Character Tag</span>
-<h1>{esc(tag)} Character Personas</h1>
-<p>{esc(description)}</p>
-{cards_grid(items)}
 </main>
 """
 
@@ -1632,7 +1574,7 @@ def build_tag_hubs(rows):
             os.path.join(OUTPUT_DIR, "tag", tag_slug + ".html"),
             page_shell(
                 f"{tag} Character Personas | {SITE_NAME}",
-                description,
+                f"Browse character personas tagged with {tag.lower()}.",
                 absolute_url(f"/tag/{tag_slug}.html"),
                 content
             )
@@ -1644,39 +1586,45 @@ def build_tag_hubs(rows):
 # ============================================================
 
 def build_legal_pages():
-    dmca_content = f"""
+    dmca = f"""
 <main class="container section">
-<span class="eyebrow">Copyright Information</span>
-<h1>DMCA Copyright Policy</h1>
 <div class="panel">
-<h2>Copyright Respect</h2>
+<h1>DMCA and Copyright Policy</h1>
 <p>
-{esc(SITE_NAME)} respects the intellectual property rights
-of creators and expects users and contributors to do the same.
+{esc(SITE_NAME)} respects intellectual property rights.
+If you believe material on this website infringes your copyright,
+send a notice to <a href="mailto:{esc(CONTACT_EMAIL)}">{esc(CONTACT_EMAIL)}</a>.
 </p>
-<h2>Submitting a Copyright Notice</h2>
-<p>
-If you believe material published on this website infringes
-your copyright, send a written notice to:
-</p>
-<p><a href="mailto:{esc(CONTACT_EMAIL)}">{esc(CONTACT_EMAIL)}</a></p>
-<p>Your notice should include:</p>
+<h2>Include in your notice</h2>
 <ul>
-<li>Identification of the copyrighted work.</li>
-<li>Identification of the allegedly infringing material and its URL.</li>
-<li>Your contact information.</li>
-<li>A statement of good-faith belief that the use is unauthorized.</li>
-<li>A statement that the information is accurate and that you are
-authorized to act on behalf of the rights holder.</li>
 <li>Your physical or electronic signature.</li>
+<li>Identification of the copyrighted work.</li>
+<li>The URL or location of the material you believe is infringing.</li>
+<li>Your contact information.</li>
+<li>A statement that you have a good-faith belief the use is unauthorized.</li>
+<li>A statement, under penalty of perjury, that the information is accurate.</li>
 </ul>
-<h2>Review and Response</h2>
+<p>We will review complete notices and take appropriate action.</p>
+</div>
+</main>
+"""
+
+    compliance = f"""
+<main class="container section">
+<div class="panel">
+<h1>18 U.S.C. §2257 Record-Keeping Statement</h1>
 <p>
-Valid notices will be reviewed. Where appropriate, material may
-be restricted or removed while the matter is investigated.
+This website is intended to publish fictional character descriptions,
+creative writing resources, and text-based persona concepts.
+It does not knowingly host visual depictions of actual sexually
+explicit conduct.
 </p>
-<h2>Contact</h2>
-<p>{esc(CONTACT_EMAIL)}</p>
+<p>
+Any third-party links are provided for convenience. The operators
+of linked services are responsible for their own content and
+compliance obligations.
+</p>
+<p>For questions, contact {esc(CONTACT_EMAIL)}.</p>
 </div>
 </main>
 """
@@ -1684,58 +1632,26 @@ be restricted or removed while the matter is investigated.
     write_file(
         os.path.join(OUTPUT_DIR, "dmca.html"),
         page_shell(
-            f"DMCA Copyright Policy | {SITE_NAME}",
+            f"DMCA Policy | {SITE_NAME}",
             "Copyright and DMCA policy for Character Persona Hub.",
             absolute_url("/dmca.html"),
-            dmca_content
+            dmca
         )
     )
-
-    section_content = f"""
-<main class="container section">
-<span class="eyebrow">Compliance Information</span>
-<h1>18 U.S.C. §2257 Statement</h1>
-<div class="panel">
-<h2>Nature of Website Content</h2>
-<p>
-{esc(SITE_NAME)} is a fictional character-template and
-creative writing resource. The website publishes text-based
-fictional character descriptions, personality profiles,
-dialogue prompts, and AI companion concepts.
-</p>
-<h2>Nature of Materials</h2>
-<p>
-The website does not intentionally publish actual visual
-depictions of sexually explicit conduct. Character profiles
-and dialogue templates are fictional textual materials.
-</p>
-<h2>Age Requirement</h2>
-<p>
-Access to the website is intended for adults aged 18 or older.
-A browser-based age confirmation is displayed to visitors.
-</p>
-<h2>Contact</h2>
-<p>
-For questions about website content or compliance, contact
-<a href="mailto:{esc(CONTACT_EMAIL)}">{esc(CONTACT_EMAIL)}</a>.
-</p>
-</div>
-</main>
-"""
 
     write_file(
         os.path.join(OUTPUT_DIR, "2257.html"),
         page_shell(
             f"18 U.S.C. §2257 Statement | {SITE_NAME}",
-            "Compliance information and statement for Character Persona Hub.",
+            "Record-keeping compliance statement for Character Persona Hub.",
             absolute_url("/2257.html"),
-            section_content
+            compliance
         )
     )
 
 
 # ============================================================
-# XML SITEMAP STYLESHEET
+# SITEMAP XSL
 # ============================================================
 
 SITEMAP_XSL = r"""<?xml version="1.0" encoding="UTF-8"?>
@@ -1744,28 +1660,22 @@ SITEMAP_XSL = r"""<?xml version="1.0" encoding="UTF-8"?>
  xmlns:s="http://www.sitemaps.org/schemas/sitemap/0.9">
 <xsl:output method="html" encoding="UTF-8" indent="yes"/>
 <xsl:template match="/">
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Character Persona Hub — XML Sitemap</title>
+<title>XML Sitemap — Character Persona Hub</title>
 <style>
-*{box-sizing:border-box}
-body{margin:0;padding:35px 20px;background:#0a080d;color:#f8f2fa;font-family:Arial,sans-serif}
-main{max-width:1100px;margin:auto}
+body{font-family:Arial,sans-serif;background:#0a080d;color:#f8f2fa;padding:30px}
 h1{color:#fb7185}
 p{color:#aa9eaf}
-table{width:100%;border-collapse:collapse;background:#16111d;border-radius:12px;overflow:hidden}
-th,td{text-align:left;padding:13px;border-bottom:1px solid #302536;font-size:13px}
+table{width:100%;border-collapse:collapse;background:#16111d}
+th,td{text-align:left;padding:12px;border-bottom:1px solid #302638}
 th{color:#c4a4ff}
-a{color:#fb8196;text-decoration:none;overflow-wrap:anywhere}
-a:hover{text-decoration:underline}
+a{color:#fb7185;overflow-wrap:anywhere}
 </style>
 </head>
 <body>
-<main>
-<h1>Character Persona Hub Sitemap</h1>
-<p>Index of published pages.</p>
+<h1>Character Persona Hub — XML Sitemap</h1>
+<p>Search engines can use this sitemap to discover published pages.</p>
 <table>
 <tr><th>URL</th><th>Last Modified</th></tr>
 <xsl:for-each select="s:urlset/s:url">
@@ -1775,7 +1685,6 @@ a:hover{text-decoration:underline}
 </tr>
 </xsl:for-each>
 </table>
-</main>
 </body>
 </html>
 </xsl:template>
@@ -1849,7 +1758,7 @@ def build_sitemaps(rows):
             xml.append(
                 "<url>"
                 f"<loc>{html.escape(url)}</loc>"
-                f"<lastmod>{datetime.utcnow().date().isoformat()}</lastmod>"
+                f"<lastmod>{datetime.now(timezone.utc).date().isoformat()}</lastmod>"
                 "</url>"
             )
 
@@ -1878,7 +1787,7 @@ def build_sitemaps(rows):
             index_xml.append(
                 "<sitemap>"
                 f"<loc>{html.escape(absolute_url('/' + filename))}</loc>"
-                f"<lastmod>{datetime.utcnow().date().isoformat()}</lastmod>"
+                f"<lastmod>{datetime.now(timezone.utc).date().isoformat()}</lastmod>"
                 "</sitemap>"
             )
 
