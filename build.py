@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
-Flirty Chat Openers — Production Static pSEO Website Builder
-============================================================
-
-Python 3 | Zero external dependencies | Cloudflare Pages / Workers
+Character Persona Hub — Static Programmatic SEO Website Generator
+Python 3 standard library only.
 
 Usage:
     python3 build.py
@@ -13,47 +11,19 @@ Input:
 
 Output:
     dist/
-      index.html
-      lines/
-      category/
-      topic/
-      tag/
-      sitemap.xml
-      sitemap-1.xml
-      sitemap.xsl
-      robots.txt
-      dmca.html
-      2257.html
-
-Features:
-    - Evergreen dynamic year and freshness engine
-    - Responsive dark-mode electric-magenta design
-    - Interactive opener generator and individual copy buttons
-    - Live name personalization
-    - Random opener selector
-    - Follow-up conversation coach
-    - Native affiliate CTA
-    - Age verification
-    - SEO metadata and JSON-LD
-    - Category, subcategory and tag hubs
-    - Pagination
-    - Related content recommendations
-    - XML sitemap and stylesheet
-    - CSV validation and HTML escaping
-    - Zero external JavaScript or CSS dependencies
 """
 
 import os
-import re
 import csv
+import re
 import json
 import html
+import math
 import shutil
-import hashlib
-from collections import Counter, defaultdict
+import unicodedata
 from datetime import datetime
+from collections import defaultdict, Counter
 from urllib.parse import quote
-
 
 # ============================================================
 # CONFIGURATION
@@ -61,127 +31,129 @@ from urllib.parse import quote
 
 BASE_URL = os.environ.get(
     "BASE_URL",
-    "https://flirty-chat-openers.velvetgrid.workers.dev"
+    "https://character-persona-hub.velvetgrid.workers.dev"
 ).rstrip("/")
 
-SITE_NAME = "Flirty Chat Openers"
-
-NICHE_TOPIC = (
-    "Flirty Text Starters, Spicy Pick-Up Lines & Late Night Replies"
-)
-
+SITE_NAME = "Character Persona Hub"
 CONTACT_EMAIL = "nancympatten@gmail.com"
 
+GOOGLE_VERIFICATION = "Ee2L9A2G2nVVNtBt7HiplcBJf1nSen-Rcz4sNqLuAdc"
+BING_VERIFICATION = "4573069C62AEC27DA4F08DC57760BAD4"
+
 AFFILIATE_URL = "#affiliate-link"
+AFFILIATE_CTA_TEXT = "Import This Character Card into an AI Voice Companion"
 
-AFFILIATE_CTA_TEXT = (
-    "Practice Flirting 24/7 with an AI Companion (Free Chat)"
-)
-
-CURRENT_YEAR = datetime.utcnow().year
-
-INPUT_FILE = "data.csv"
+DATA_FILE = "data.csv"
 OUTPUT_DIR = "dist"
 
 ITEMS_PER_PAGE = 24
-RELATED_ITEMS = 8
-NEWEST_ITEMS = 30
+RELATED_LIMIT = 8
+NEWEST_LIMIT = 30
+SITEMAP_LIMIT = 45000
 
-EXPECTED_COLUMNS = [
-    "slug",
-    "title",
-    "category",
-    "subcategory",
-    "target_keyword",
-    "openers_list",
-    "follow_up_tips",
-    "description",
-    "tags",
-    "faq_q1",
-    "faq_a1",
-    "faq_q2",
-    "faq_a2",
-    "upload_date",
+CURRENT_YEAR = datetime.utcnow().year
+
+CSV_COLUMNS = [
+    "slug", "title", "category", "subcategory", "target_keyword",
+    "character_bio", "personality_traits", "opening_line",
+    "description", "tags", "faq_q1", "faq_a1",
+    "faq_q2", "faq_a2", "upload_date",
 ]
+
+# The current website is deliberately excluded from this list.
+NETWORK_SITES = [
+    ("AI Girlfriend Prompts",
+     "https://ai-girlfriend-prompts.velvetgrid.workers.dev"),
+    ("Couples Intimacy Games",
+     "https://couples-intimacy-games.velvetgrid.workers.dev"),
+    ("Fantasy Roleplay Hub",
+     "https://fantasy-roleplay-hub.velvetgrid.workers.dev"),
+    ("Flirty Chat Openers",
+     "https://flirty-chat-openers.velvetgrid.workers.dev"),
+    ("Midnight Audio Stories",
+     "https://midnight-audio-stories.velvetgrid.workers.dev"),
+    ("Spicy Party Games",
+     "https://spicy-party-games.velvetgrid.workers.dev"),
+    ("Intimacy Quiz Hub",
+     "https://intimacy-quiz-hub.velvetgrid.workers.dev"),
+    ("Couples Bucket List",
+     "https://couples-bucket-list.velvetgrid.workers.dev"),
+    ("Adult AI Art Prompts",
+     "https://adult-ai-art-prompts.velvetgrid.workers.dev"),
+]
+
+AD_SLOTS = """
+<!-- AD_SLOT_POPUNDER -->
+<!-- AD_SLOT_TOP_BANNER -->
+<!-- AD_SLOT_MID_CONTENT -->
+<!-- AD_SLOT_STICKY_FOOTER -->
+"""
 
 # ============================================================
 # UTILITIES
 # ============================================================
 
-
-def esc(value):
-    """Safely escape HTML content."""
-    return html.escape(str(value or ""), quote=True)
-
-
 def clean(value):
-    """Normalize CSV values."""
     return str(value or "").strip()
 
 
+def esc(value):
+    return html.escape(str(value or ""), quote=True)
+
+
 def slugify(value):
-    """Create URL-safe slugs."""
-    value = clean(value).lower()
+    value = unicodedata.normalize("NFKD", clean(value))
+    value = value.encode("ascii", "ignore").decode("ascii").lower()
     value = re.sub(r"[^a-z0-9]+", "-", value)
     return value.strip("-") or "uncategorized"
 
 
-def safe_slug(value):
-    """Prevent unsafe filesystem paths."""
-    value = slugify(value)
-    return value[:150] or "untitled"
-
-
 def absolute_url(path):
-    """Create an absolute canonical URL."""
-    path = str(path).lstrip("/")
-    return BASE_URL + "/" + path
+    return BASE_URL.rstrip("/") + "/" + path.lstrip("/")
 
 
-def json_ld(data):
-    """Serialize JSON-LD safely."""
+def truncate(value, limit=160):
+    value = re.sub(r"\s+", " ", clean(value))
+    if len(value) <= limit:
+        return value
+    return value[:limit - 3].rsplit(" ", 1)[0] + "..."
+
+
+def safe_json(data):
     return (
-        json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        json.dumps(data, ensure_ascii=False)
         .replace("<", "\\u003c")
         .replace(">", "\\u003e")
         .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
     )
 
 
 def split_tags(value):
-    """Parse comma-separated tags."""
-    if not value:
-        return []
+    if isinstance(value, list):
+        raw = value
+    else:
+        raw = re.split(r"[,;|]", str(value or ""))
 
-    tags = []
+    result = []
+    seen = set()
 
-    for item in re.split(r"[,|]", clean(value)):
-        item = item.strip()
+    for item in raw:
+        item = clean(item)
+        key = item.lower()
+        if item and key not in seen:
+            seen.add(key)
+            result.append(item)
 
-        if item and item.lower() not in [x.lower() for x in tags]:
-            tags.append(item)
-
-    return tags
-
-
-def split_openers(value):
-    """Split individual flirty lines using the pipe delimiter."""
-    if not value:
-        return []
-
-    return [
-        line.strip()
-        for line in str(value).split("|")
-        if line.strip()
-    ]
+    return result
 
 
-def date_value(value):
-    """Parse common CSV date formats."""
+def parse_date(value):
     value = clean(value)
 
     if not value:
-        return datetime(2000, 1, 1)
+        return datetime.min
 
     formats = [
         "%Y-%m-%d",
@@ -189,7 +161,7 @@ def date_value(value):
         "%d-%m-%Y",
         "%m/%d/%Y",
         "%Y-%m-%d %H:%M:%S",
-        "%d/%m/%Y",
+        "%Y-%m-%dT%H:%M:%S",
     ]
 
     for fmt in formats:
@@ -199,1475 +171,963 @@ def date_value(value):
             pass
 
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(
-            tzinfo=None
-        )
+        return datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        ).replace(tzinfo=None)
     except ValueError:
-        return datetime(2000, 1, 1)
-
-
-def unique_filename(value):
-    """Generate collision-resistant filename components."""
-    base = safe_slug(value)
-
-    digest = hashlib.sha1(
-        clean(value).encode("utf-8")
-    ).hexdigest()[:7]
-
-    return f"{base}-{digest}"
-
-
-def ensure_dir(path):
-    os.makedirs(path, exist_ok=True)
+        return datetime.min
 
 
 def write_file(path, content):
-    ensure_dir(os.path.dirname(path) or OUTPUT_DIR)
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
 
-    with open(path, "w", encoding="utf-8", newline="") as file:
+    with open(path, "w", encoding="utf-8", newline="\n") as file:
         file.write(content)
 
 
-def page_url(page):
-    return absolute_url(page)
+def make_directory():
+    if os.path.exists(OUTPUT_DIR):
+        shutil.rmtree(OUTPUT_DIR)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 # ============================================================
-# CSV LOADER
+# CSV
 # ============================================================
 
-
-def load_data():
-    """Read and validate the source CSV."""
-
-    if not os.path.isfile(INPUT_FILE):
+def read_csv():
+    if not os.path.isfile(DATA_FILE):
         raise FileNotFoundError(
-            f"Missing {INPUT_FILE}. Place data.csv beside build.py."
+            f"Missing {DATA_FILE}. Put data.csv beside build.py."
         )
 
     rows = []
 
-    with open(
-        INPUT_FILE,
-        "r",
-        encoding="utf-8-sig",
-        newline=""
-    ) as file:
-
+    with open(DATA_FILE, "r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
 
         if not reader.fieldnames:
-            raise ValueError("The CSV file is empty or has no header.")
+            raise ValueError("data.csv has no header row.")
 
-        missing = [
-            column
-            for column in EXPECTED_COLUMNS
-            if column not in reader.fieldnames
-        ]
+        missing = [c for c in CSV_COLUMNS if c not in reader.fieldnames]
 
         if missing:
             raise ValueError(
-                "Missing required CSV columns: "
-                + ", ".join(missing)
+                "Missing required CSV columns: " + ", ".join(missing)
             )
 
         used_slugs = set()
 
-        for line_number, original in enumerate(reader, start=2):
+        for line_number, raw in enumerate(reader, start=2):
+            row = {c: clean(raw.get(c, "")) for c in CSV_COLUMNS}
 
-            row = {
-                key: clean(value)
-                for key, value in original.items()
-                if key is not None
-            }
-
-            if not row.get("title"):
-                print(
-                    f"Skipping CSV line {line_number}: missing title."
-                )
+            if not row["title"]:
+                print(f"Skipping row {line_number}: missing title.")
                 continue
 
-            original_slug = row.get("slug") or row["title"]
-            slug = safe_slug(original_slug)
+            original_slug = slugify(row["slug"] or row["title"])
+            slug = original_slug
+            suffix = 2
 
-            if slug in used_slugs:
-                slug = f"{slug}-{hashlib.sha1(str(line_number).encode()).hexdigest()[:6]}"
+            while slug in used_slugs:
+                slug = f"{original_slug}-{suffix}"
+                suffix += 1
 
             used_slugs.add(slug)
-
             row["slug"] = slug
 
-            row["category"] = row.get("category") or "General Flirting"
-
+            row["category"] = row["category"] or "General Personas"
             row["subcategory"] = (
-                row.get("subcategory") or "General Openers"
+                row["subcategory"] or "Character Templates"
             )
 
-            row["tags_list"] = split_tags(row.get("tags", ""))
+            if not row["description"]:
+                row["description"] = (
+                    row["character_bio"][:250]
+                    or f"Explore the {row['title']} character persona."
+                )
 
-            row["openers"] = split_openers(
-                row.get("openers_list", "")
-            )
-
-            row["date_object"] = date_value(
-                row.get("upload_date", "")
-            )
-
-            row["category_slug"] = safe_slug(row["category"])
-
-            row["subcategory_slug"] = safe_slug(
-                row["subcategory"]
-            )
-
-            row["tag_slugs"] = [
-                safe_slug(tag)
-                for tag in row["tags_list"]
+            row["_tags"] = split_tags(row["tags"])
+            row["_traits"] = [
+                clean(t)
+                for t in row["personality_traits"].split("|")
+                if clean(t)
+            ]
+            row["_date"] = parse_date(row["upload_date"])
+            row["_category_slug"] = slugify(row["category"])
+            row["_subcategory_slug"] = slugify(row["subcategory"])
+            row["_tag_slugs"] = [
+                slugify(tag) for tag in row["_tags"]
             ]
 
-            row["detail_path"] = (
-                f"lines/{row['slug']}.html"
-            )
-
-            row["canonical"] = absolute_url(
-                row["detail_path"]
-            )
-
             rows.append(row)
+
+    if not rows:
+        raise ValueError("data.csv contains no usable character personas.")
 
     return rows
 
 
 # ============================================================
-# GLOBAL CONTENT INDEXES
+# CSS
 # ============================================================
 
-
-def build_indexes(rows):
-
-    categories = defaultdict(list)
-    subcategories = defaultdict(list)
-    tags = defaultdict(list)
-
-    category_names = {}
-    subcategory_names = {}
-    tag_names = {}
-
-    for row in rows:
-
-        category_key = row["category_slug"]
-
-        subcategory_key = row["subcategory_slug"]
-
-        category_names[category_key] = row["category"]
-
-        subcategory_names[subcategory_key] = row["subcategory"]
-
-        categories[category_key].append(row)
-
-        subcategories[subcategory_key].append(row)
-
-        for tag, tag_slug in zip(
-            row["tags_list"],
-            row["tag_slugs"]
-        ):
-            tags[tag_slug].append(row)
-            tag_names[tag_slug] = tag
-
-    return {
-        "categories": categories,
-        "subcategories": subcategories,
-        "tags": tags,
-        "category_names": category_names,
-        "subcategory_names": subcategory_names,
-        "tag_names": tag_names,
-    }
-
-
-# ============================================================
-# SHARED DESIGN SYSTEM
-# ============================================================
-
-
-def shared_css():
-
-    return r"""
+CSS = r"""
 :root {
     color-scheme: dark;
-    --bg: #09080f;
-    --surface: #151221;
-    --surface2: #1c182b;
-    --pink: #ec4899;
-    --pink2: #f472b6;
-    --indigo: #6366f1;
-    --text: #f8f5ff;
-    --muted: #a8a1b8;
-    --border: rgba(255,255,255,.09);
-    --radius: 18px;
-    --shadow: 0 12px 40px rgba(0,0,0,.28);
-}
-
-* {
-    box-sizing: border-box;
-}
-
-html {
-    scroll-behavior: smooth;
-}
-
-body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
-                 "Segoe UI", sans-serif;
-    line-height: 1.7;
-}
-
-a {
-    color: var(--pink2);
-    text-decoration: none;
-}
-
-a:hover {
-    color: white;
-}
-
-button, input {
-    font: inherit;
-}
-
-button {
-    cursor: pointer;
-}
-
-.container {
-    width: min(1120px, calc(100% - 36px));
-    margin: auto;
-}
-
-header {
-    position: sticky;
-    top: 0;
-    z-index: 50;
-    background: rgba(9,8,15,.94);
-    border-bottom: 1px solid var(--border);
-    backdrop-filter: blur(15px);
-}
-
-.nav {
-    min-height: 72px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-}
-
-.logo {
-    font-size: 20px;
-    font-weight: 900;
-    letter-spacing: -.7px;
-    color: white;
-}
-
-.logo span {
-    color: var(--pink);
-}
-
-.nav-links {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 18px;
-    font-size: 13px;
-}
-
-.hero {
-    padding: 75px 0 50px;
-    text-align: center;
-}
-
-.hero h1 {
-    max-width: 900px;
-    margin: 12px auto 18px;
-    font-size: clamp(35px, 6vw, 65px);
-    line-height: 1.08;
-    letter-spacing: -2.4px;
-}
-
-.gradient-text {
-    background: linear-gradient(100deg, #ec4899, #a78bfa, #6366f1);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-}
-
-.hero p {
-    max-width: 700px;
-    margin: 0 auto;
-    color: var(--muted);
-}
-
-.eyebrow {
-    display: inline-flex;
-    padding: 7px 13px;
-    border-radius: 100px;
-    background: rgba(236,72,153,.12);
-    color: var(--pink2);
-    border: 1px solid rgba(236,72,153,.25);
-    font-size: 12px;
-    font-weight: 800;
-}
-
-.section {
-    padding: 35px 0;
-}
-
-.section-heading {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-bottom: 22px;
-}
-
-.section-heading h2 {
-    font-size: clamp(23px, 4vw, 32px);
-    margin: 0;
-    letter-spacing: -.8px;
-}
-
-.muted {
-    color: var(--muted);
-}
-
-.grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0,1fr));
-    gap: 16px;
-}
-
-.card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 21px;
-    box-shadow: var(--shadow);
-    transition: transform .2s, border-color .2s;
-    min-width: 0;
-}
-
-.card:hover {
-    transform: translateY(-3px);
-    border-color: rgba(236,72,153,.45);
-}
-
-.card h3 {
-    margin: 8px 0;
-    line-height: 1.35;
-}
-
-.card p {
-    color: var(--muted);
-    font-size: 14px;
-}
-
-.card-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--muted);
-}
-
-.pill {
-    display: inline-flex;
-    align-items: center;
-    border: 1px solid var(--border);
-    border-radius: 50px;
-    padding: 6px 12px;
-    background: var(--surface2);
-    color: var(--pink2);
-    font-size: 12px;
-    margin: 3px;
-}
-
-.search-box {
-    max-width: 720px;
-    margin: 32px auto 0;
-    position: relative;
-}
-
-.search-box input,
-.customizer input {
-    width: 100%;
-    padding: 16px 18px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: white;
-    outline: none;
-    border-radius: 13px;
-}
-
-.search-box input:focus,
-.customizer input:focus {
-    border-color: var(--pink);
-}
-
-.search-results {
-    text-align: left;
-    display: none;
-    margin-top: 12px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 15px;
-}
-
-.button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    border: 0;
-    border-radius: 11px;
-    padding: 11px 17px;
-    background: linear-gradient(110deg, #ec4899, #9333ea);
-    color: white;
-    font-weight: 800;
-    font-size: 13px;
-    transition: opacity .2s, transform .2s;
-}
-
-.button:hover {
-    color: white;
-    opacity: .9;
-    transform: translateY(-1px);
-}
-
-.button.secondary {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-}
-
-.button.small {
-    padding: 8px 12px;
-    font-size: 12px;
-}
-
-.badge {
-    display: inline-block;
-    padding: 5px 10px;
-    border-radius: 50px;
-    background: rgba(99,102,241,.13);
-    color: #a5b4fc;
-    font-size: 11px;
-    font-weight: 800;
-}
-
-.count {
-    color: var(--muted);
-    font-size: 12px;
-}
-
-.detail-hero {
-    padding: 55px 0 30px;
-}
-
-.detail-hero h1 {
-    font-size: clamp(32px, 5vw, 52px);
-    line-height: 1.12;
-    letter-spacing: -1.5px;
-}
-
-.breadcrumbs {
-    font-size: 12px;
-    color: var(--muted);
-    margin-bottom: 18px;
-}
-
-.breadcrumbs a {
-    color: var(--pink2);
-}
-
-.opener-list {
-    display: grid;
-    gap: 13px;
-}
-
-.opener-card {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 15px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 15px;
-    padding: 17px;
-}
-
-.opener-text {
-    font-size: 15px;
-    overflow-wrap: anywhere;
-}
-
-.opener-actions {
-    flex-shrink: 0;
-}
-
-.customizer {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-    margin: 20px 0;
-}
-
-.customizer label {
-    display: block;
-    margin-bottom: 7px;
-    color: var(--muted);
-    font-size: 12px;
-    font-weight: 700;
-}
-
-.spotlight {
-    background: linear-gradient(120deg, #31122e, #211b48);
-    border: 1px solid rgba(236,72,153,.3);
-    border-radius: var(--radius);
-    padding: 24px;
-    margin: 20px 0;
-}
-
-.spotlight h3 {
-    margin-top: 0;
-}
-
-.spotlight-line {
-    font-size: 21px;
-    line-height: 1.5;
-    font-weight: 750;
-    margin: 16px 0;
-}
-
-.affiliate {
-    margin: 27px 0;
-    padding: 27px;
-    border-radius: var(--radius);
-    background: linear-gradient(125deg, #3b123b, #1c1b43);
-    border: 1px solid rgba(236,72,153,.38);
-    text-align: center;
-}
-
-.affiliate h2 {
-    margin-top: 0;
-}
-
-.strategy {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 15px;
-    padding: 20px;
-}
-
-.strategy summary {
-    cursor: pointer;
-    color: var(--pink2);
-    font-weight: 800;
-}
-
-.strategy-content {
-    color: var(--muted);
-    white-space: pre-wrap;
-    margin-top: 14px;
-}
-
-.tag-cloud {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 7px;
-}
-
-.pagination {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 14px;
-    margin: 35px 0;
-}
-
-.empty {
-    padding: 35px;
-    border-radius: var(--radius);
-    text-align: center;
-    color: var(--muted);
-    background: var(--surface);
-}
-
-footer {
-    border-top: 1px solid var(--border);
-    margin-top: 70px;
-    padding: 38px 0;
-    color: var(--muted);
-    font-size: 13px;
-}
-
-.footer-grid {
-    display: grid;
-    grid-template-columns: 2fr 1fr 1fr;
-    gap: 30px;
-}
-
-footer a {
-    display: block;
-    margin: 7px 0;
-}
-
-.age-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-    background: rgba(0,0,0,.94);
-    backdrop-filter: blur(15px);
-}
-
-.age-box {
-    max-width: 440px;
-    width: 100%;
-    padding: 32px;
-    background: var(--surface);
-    border: 1px solid rgba(236,72,153,.4);
-    border-radius: 22px;
-    text-align: center;
-}
-
-.age-box h2 {
-    font-size: 28px;
-}
-
-.age-box p {
-    color: var(--muted);
-    font-size: 14px;
-}
-
-.age-buttons {
-    display: grid;
-    gap: 10px;
-    margin-top: 22px;
-}
-
-.no-results {
-    display: none;
-    color: var(--muted);
-    padding: 20px;
-}
-
-.ad-slot {
-    width: 100%;
-    min-height: 0;
-}
-
-@media(max-width:800px) {
-    .grid {
-        grid-template-columns: repeat(2,minmax(0,1fr));
-    }
-
-    .footer-grid {
-        grid-template-columns: 1fr 1fr;
-    }
-}
-
-@media(max-width:560px) {
-    .container {
-        width: calc(100% - 28px);
-    }
-
-    .nav {
-        padding: 12px 0;
-        align-items: flex-start;
-    }
-
-    .nav-links {
-        gap: 9px;
-        font-size: 11px;
-    }
-
-    .logo {
-        font-size: 16px;
-    }
-
-    .hero {
-        padding: 48px 0 30px;
-    }
-
-    .hero h1 {
-        letter-spacing: -1.4px;
-    }
-
-    .grid {
-        grid-template-columns: 1fr;
-    }
-
-    .customizer {
-        grid-template-columns: 1fr;
-    }
-
-    .opener-card {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .footer-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .spotlight-line {
-        font-size: 18px;
-    }
+    --bg:#0a080d; --surface:#16111d; --surface2:#201827;
+    --text:#f8f2fa; --muted:#aa9eaf; --border:rgba(255,255,255,.09);
+    --rose:#f43f5e; --violet:#8b5cf6; --green:#4ade80;
+    --radius:18px; --max-width:1160px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+    margin:0;background:var(--bg);color:var(--text);
+    font-family:Inter,ui-sans-serif,system-ui,-apple-system,
+    BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.7
+}
+a{color:inherit;text-decoration:none}
+a:hover{color:var(--rose)}
+button,input,select{font:inherit}
+button{cursor:pointer}
+.container{width:min(var(--max-width),calc(100% - 36px));margin:auto}
+.site-header{
+    position:sticky;top:0;z-index:50;background:rgba(10,8,13,.94);
+    backdrop-filter:blur(18px);border-bottom:1px solid var(--border)
+}
+.nav{min-height:70px;display:flex;align-items:center;
+    justify-content:space-between;gap:20px}
+.brand{font-size:19px;font-weight:900;letter-spacing:-.8px}
+.brand span{color:var(--rose)}
+.nav-links{display:flex;gap:20px;align-items:center;
+    font-size:13px;color:var(--muted)}
+.hero{padding:85px 0 55px;text-align:center;
+    background:radial-gradient(ellipse at 20% 20%,rgba(139,92,246,.14),transparent 45%),
+    radial-gradient(ellipse at 80% 40%,rgba(244,63,94,.12),transparent 45%)}
+.eyebrow{display:inline-flex;padding:6px 13px;border-radius:99px;
+    border:1px solid rgba(244,63,94,.3);background:rgba(244,63,94,.08);
+    color:#ff8196;font-size:11px;font-weight:800;text-transform:uppercase;
+    letter-spacing:1.5px}
+.hero h1{font-size:clamp(34px,6vw,62px);line-height:1.08;
+    letter-spacing:-2.5px;max-width:850px;margin:22px auto}
+.gradient-text{background:linear-gradient(100deg,#fb7185,#c084fc);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{color:var(--muted);max-width:650px;margin:0 auto 30px}
+.search-wrap{max-width:680px;margin:30px auto 0;position:relative}
+.search-input{width:100%;padding:19px 22px 19px 54px;
+    border:1px solid rgba(244,63,94,.3);border-radius:15px;outline:none;
+    color:white;background:var(--surface);box-shadow:0 15px 60px rgba(0,0,0,.2)}
+.search-input:focus{border-color:var(--rose)}
+.search-icon{position:absolute;left:19px;top:14px;color:var(--rose);font-size:21px}
+.section{padding:45px 0}
+.section-heading{display:flex;align-items:end;justify-content:space-between;
+    flex-wrap:wrap;gap:12px;margin-bottom:24px}
+.section-heading h2{font-size:clamp(23px,4vw,32px);letter-spacing:-.8px;margin:0}
+.section-heading p{margin:4px 0 0;color:var(--muted);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.persona-card,.hub-card{background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:21px;transition:transform .2s,border-color .2s}
+.persona-card:hover,.hub-card:hover{transform:translateY(-3px);
+    border-color:rgba(244,63,94,.4)}
+.card-category{color:#c4a4ff;font-size:11px;font-weight:800;
+    text-transform:uppercase;letter-spacing:1px}
+.persona-card h3{font-size:19px;line-height:1.35;margin:10px 0}
+.persona-card p{color:var(--muted);font-size:13px}
+.card-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}
+.pill{display:inline-flex;align-items:center;border-radius:99px;padding:5px 11px;
+    background:rgba(139,92,246,.13);border:1px solid rgba(139,92,246,.23);
+    color:#d3bdff;font-size:11px}
+.trait-pill{background:rgba(244,63,94,.10);border:1px solid rgba(244,63,94,.28);
+    color:#ff9bad;box-shadow:0 0 13px rgba(244,63,94,.07)}
+.card-link{display:inline-block;margin-top:15px;color:#fb7185;
+    font-size:13px;font-weight:800}
+.hub-card{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.hub-card strong{font-size:14px}
+.count{color:#ff8498;font-size:12px;white-space:nowrap}
+.tag-cloud{display:flex;flex-wrap:wrap;gap:10px}
+.tag-cloud a,.subcategory-pill{display:inline-flex;padding:8px 14px;border-radius:99px;
+    background:var(--surface);border:1px solid var(--border);
+    color:#d7c8dc;font-size:12px}
+.tag-cloud a:hover,.subcategory-pill:hover{border-color:var(--rose)}
+.breadcrumbs{color:var(--muted);font-size:12px;padding:22px 0}
+.detail-hero{padding:35px 0}
+.detail-hero h1{font-size:clamp(30px,5vw,48px);line-height:1.13;
+    letter-spacing:-1.5px;margin:15px 0}
+.detail-grid{display:grid;grid-template-columns:minmax(0,1fr) 310px;
+    gap:25px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:25px;margin-bottom:20px}
+.panel h2{margin-top:0;font-size:21px}
+.panel h3{font-size:16px}
+.panel p{color:#c8bccd}
+.status-badge{display:inline-flex;padding:7px 12px;
+    border:1px solid rgba(74,222,128,.3);color:var(--green);
+    background:rgba(74,222,128,.07);border-radius:99px;font-size:11px;font-weight:800}
+.traits{display:flex;flex-wrap:wrap;gap:9px}
+.customizer-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.field label{display:block;margin-bottom:7px;color:var(--muted);
+    font-size:12px;font-weight:700}
+.field input,.field select{width:100%;background:#0d0a11;color:white;
+    border:1px solid var(--border);padding:12px;border-radius:10px;outline:none}
+.field input:focus,.field select:focus{border-color:var(--rose)}
+.action-btn{border:1px solid rgba(244,63,94,.3);background:rgba(244,63,94,.12);
+    color:#ff9bab;padding:10px 15px;border-radius:10px;font-size:12px;
+    font-weight:800;transition:.2s}
+.action-btn:hover{background:rgba(244,63,94,.23)}
+.primary-btn{display:inline-block;border:0;color:white;
+    background:linear-gradient(100deg,#f43f5e,#8b5cf6);
+    padding:13px 19px;border-radius:11px;font-weight:900;font-size:12px}
+.button-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:17px}
+.token-badge{display:inline-block;padding:6px 11px;background:rgba(139,92,246,.15);
+    border-radius:99px;color:#d4bdff;font-size:11px}
+.prompt-output{white-space:pre-wrap;overflow-wrap:anywhere;background:#0d0a11;
+    border:1px solid var(--border);border-radius:12px;padding:17px;
+    color:#ddd1e2;font-size:13px}
+.affiliate-card{border:1px solid rgba(244,63,94,.4);
+    background:radial-gradient(circle at 90% 0%,rgba(139,92,246,.2),transparent 50%),var(--surface);
+    border-radius:var(--radius);padding:27px;margin:25px 0}
+.affiliate-card h2{margin-top:0}
+.affiliate-card p{color:var(--muted);font-size:14px}
+.audio-controls{display:flex;flex-wrap:wrap;align-items:center;gap:13px}
+.audio-controls select{background:#0d0a11;color:white;padding:10px;
+    border:1px solid var(--border);border-radius:9px}
+.audio-controls input[type=range]{accent-color:var(--rose);max-width:130px}
+.pagination{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px}
+.pagination a{background:var(--surface);border:1px solid var(--border);
+    border-radius:9px;padding:9px 14px;font-size:12px}
+.faq-item{padding:14px 0;border-bottom:1px solid var(--border)}
+.faq-item:last-child{border-bottom:0}
+.faq-item h3{margin:0 0 8px}
+.site-footer{border-top:1px solid var(--border);margin-top:60px;
+    padding:35px 0;color:var(--muted);font-size:12px}
+.footer-links{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:15px}
+.network-links{display:flex;flex-wrap:wrap;gap:12px 20px;margin:14px 0}
+.network-links a{color:#d3bdff}
+.network-links a:hover{color:var(--rose)}
+.age-overlay{position:fixed;inset:0;z-index:1000;display:flex;
+    align-items:center;justify-content:center;padding:20px;
+    background:rgba(0,0,0,.92);backdrop-filter:blur(12px)}
+.age-modal{width:min(430px,100%);padding:32px;background:var(--surface);
+    border:1px solid rgba(244,63,94,.35);border-radius:20px;text-align:center}
+.age-modal h2{font-size:28px;margin:0 0 10px}
+.age-modal p{color:var(--muted);font-size:13px}
+.age-actions{display:flex;gap:10px;margin-top:22px}
+.age-actions button{flex:1}
+.hidden{display:none!important}
+.empty-state{color:var(--muted);padding:35px;text-align:center;
+    background:var(--surface);border-radius:var(--radius)}
+@media(max-width:850px){
+    .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .detail-grid{grid-template-columns:1fr}
+}
+@media(max-width:580px){
+    .grid,.customizer-grid{grid-template-columns:1fr}
+    .nav-links{gap:10px;font-size:11px}
+    .hero{padding:55px 0 35px}
+    .panel{padding:19px}
+    .section{padding:30px 0}
 }
 """
 
 
 # ============================================================
-# SHARED CLIENT-SIDE JAVASCRIPT
+# JAVASCRIPT
 # ============================================================
 
-
-def shared_js():
-
-    return r"""
-<script>
-(function() {
+JS = r"""
+(function () {
     "use strict";
 
-    // Evergreen visitor-local year.
-    function updateLiveYear() {
-        var year = new Date().getFullYear();
+    function updateYears() {
+        const year = new Date().getFullYear();
 
-        document.querySelectorAll(".live-year").forEach(function(el) {
+        document.querySelectorAll(".live-year").forEach(function (el) {
             el.textContent = year;
         });
 
-        var month = new Intl.DateTimeFormat("en", {
+        const month = new Intl.DateTimeFormat(undefined, {
             month: "long"
         }).format(new Date());
 
-        document.querySelectorAll(".live-freshness").forEach(function(el) {
-            el.textContent = "Tested & Trending: " + month + " " + year;
+        document.querySelectorAll(".compatibility-status").forEach(function (el) {
+            el.textContent = "Compatibility Verified: " + month + " " + year;
         });
     }
 
-    updateLiveYear();
+    updateYears();
 
-    // Age verification.
-    var ageOverlay = document.getElementById("ageOverlay");
+    const ageOverlay = document.getElementById("age-overlay");
 
     if (ageOverlay) {
-        try {
-            var verified = localStorage.getItem("flirty18Verified");
+        const verified = localStorage.getItem("cph_age_verified");
 
-            if (verified !== "yes") {
-                ageOverlay.style.display = "flex";
-            }
-        } catch(e) {
-            ageOverlay.style.display = "flex";
+        if (verified === "yes") {
+            ageOverlay.classList.add("hidden");
+        } else {
+            ageOverlay.classList.remove("hidden");
         }
 
-        var yes = document.getElementById("ageYes");
-        var no = document.getElementById("ageNo");
+        const yes = document.getElementById("age-yes");
+        const no = document.getElementById("age-no");
 
         if (yes) {
-            yes.addEventListener("click", function() {
-                try {
-                    localStorage.setItem("flirty18Verified", "yes");
-                } catch(e) {}
-
-                ageOverlay.style.display = "none";
+            yes.addEventListener("click", function () {
+                localStorage.setItem("cph_age_verified", "yes");
+                ageOverlay.classList.add("hidden");
             });
         }
 
         if (no) {
-            no.addEventListener("click", function() {
-                document.body.innerHTML =
-                    '<main style="padding:40px;text-align:center;font-family:system-ui">' +
-                    '<h1>Access Restricted</h1>' +
-                    '<p>You must be 18 or older to access this website.</p>' +
-                    '</main>';
+            no.addEventListener("click", function () {
+                window.location.replace("about:blank");
             });
         }
     }
 
-    // Homepage live search.
-    var search = document.getElementById("liveSearch");
-    var searchResults = document.getElementById("searchResults");
+    const search = document.getElementById("persona-search");
+    const cards = Array.from(document.querySelectorAll("[data-persona-card]"));
+    const resultCount = document.getElementById("search-count");
 
-    if (search && searchResults) {
-        var entries = Array.from(
-            document.querySelectorAll("[data-search-entry]")
-        );
+    if (search) {
+        search.addEventListener("input", function () {
+            const query = search.value.toLowerCase().trim();
+            let visible = 0;
 
-        search.addEventListener("input", function() {
-            var query = search.value.trim().toLowerCase();
+            cards.forEach(function (card) {
+                const text = (
+                    card.dataset.title + " " +
+                    card.dataset.keyword + " " +
+                    card.dataset.tags
+                ).toLowerCase();
 
-            searchResults.innerHTML = "";
-            searchResults.style.display = query ? "block" : "none";
+                const matches = !query || text.includes(query);
+                card.classList.toggle("hidden", !matches);
 
-            if (!query) return;
+                if (matches) visible++;
+            });
 
-            var matches = entries.filter(function(entry) {
-                return (entry.dataset.search || "").includes(query);
-            }).slice(0, 15);
+            if (resultCount) {
+                resultCount.textContent = visible + " personas found";
+            }
+        });
+    }
 
-            if (!matches.length) {
-                searchResults.textContent = "No matching collections found.";
+    const studio = document.getElementById("persona-studio");
+
+    if (studio) {
+        const bioTemplate = studio.dataset.bio || "";
+        const openingTemplate = studio.dataset.opening || "";
+        const titleTemplate = studio.dataset.title || "Character";
+
+        const nameInput = document.getElementById("character-name");
+        const userInput = document.getElementById("user-name");
+        const settingInput = document.getElementById("character-setting");
+
+        const bioOutput = document.getElementById("custom-bio");
+        const openingOutput = document.getElementById("custom-opening");
+        const systemOutput = document.getElementById("system-prompt");
+        const greetingOutput = document.getElementById("greeting-prompt");
+        const tokenCount = document.getElementById("token-count");
+
+        function values() {
+            return {
+                character: nameInput.value.trim() || titleTemplate,
+                user: userInput.value.trim() || "you",
+                setting: settingInput.value.trim() || "a mysterious new place"
+            };
+        }
+
+        function replaceTemplate(template, data) {
+            return String(template)
+                .replace(/\{\{\s*character_name\s*\}\}/gi, data.character)
+                .replace(/\{\s*character\s*\}/gi, data.character)
+                .replace(/\{\s*user_name\s*\}/gi, data.user)
+                .replace(/\{\s*user\s*\}/gi, data.user)
+                .replace(/\{\s*setting\s*\}/gi, data.setting)
+                .replace(/\[CHARACTER_NAME\]/gi, data.character)
+                .replace(/\[USER_NAME\]/gi, data.user)
+                .replace(/\[SETTING\]/gi, data.setting);
+        }
+
+        function updateStudio() {
+            const data = values();
+            const bio = replaceTemplate(bioTemplate, data);
+            const opening = replaceTemplate(openingTemplate, data);
+
+            const system =
+                "You are " + data.character + ".\n\n" +
+                "Character biography:\n" + bio + "\n\n" +
+                "Setting:\n" + data.setting + "\n\n" +
+                "Interaction partner: " + data.user + ".\n\n" +
+                "Keep the character consistent with the profile. " +
+                "Maintain immersion and respect the user's boundaries.";
+
+            if (bioOutput) bioOutput.textContent = bio;
+            if (openingOutput) openingOutput.textContent = opening;
+            if (systemOutput) systemOutput.textContent = system;
+            if (greetingOutput) greetingOutput.textContent = opening;
+
+            if (tokenCount) {
+                const words = (system + " " + opening)
+                    .trim().split(/\s+/).filter(Boolean).length;
+                tokenCount.textContent = "~" + words + " words";
+            }
+        }
+
+        [nameInput, userInput, settingInput].forEach(function (input) {
+            if (input) input.addEventListener("input", updateStudio);
+        });
+
+        updateStudio();
+
+        async function copyText(text, button) {
+            try {
+                await navigator.clipboard.writeText(text);
+            } catch (error) {
+                const textarea = document.createElement("textarea");
+                textarea.value = text;
+                textarea.style.position = "fixed";
+                textarea.style.opacity = "0";
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand("copy");
+                textarea.remove();
+            }
+
+            const original = button.textContent;
+            button.textContent = "Copied!";
+
+            setTimeout(function () {
+                button.textContent = original;
+            }, 1600);
+        }
+
+        const copySystem = document.getElementById("copy-system");
+        const copyGreeting = document.getElementById("copy-greeting");
+
+        if (copySystem) {
+            copySystem.addEventListener("click", function () {
+                copyText(systemOutput.textContent, copySystem);
+            });
+        }
+
+        if (copyGreeting) {
+            copyGreeting.addEventListener("click", function () {
+                copyText(greetingOutput.textContent, copyGreeting);
+            });
+        }
+
+        const quirks = [
+            "Collects unusual little objects",
+            "Secretly loves old-fashioned music",
+            "Has an unexpectedly competitive streak",
+            "Remembers tiny details",
+            "Makes elaborate metaphors",
+            "Gets excited about obscure facts",
+            "Has a soft spot for handwritten notes",
+            "Occasionally talks to household objects",
+            "Enjoys dramatic storytelling",
+            "Always has a backup plan",
+            "Laughs at terrible puns",
+            "Notices details others overlook"
+        ];
+
+        const randomize = document.getElementById("randomize-quirk");
+
+        if (randomize) {
+            randomize.addEventListener("click", function () {
+                const quirk = quirks[Math.floor(Math.random() * quirks.length)];
+                const output = document.getElementById("bonus-quirk");
+                if (output) output.textContent = quirk;
+            });
+        }
+
+        const playButton = document.getElementById("ambience-toggle");
+        const modeSelect = document.getElementById("sound-mode");
+        const volumeSlider = document.getElementById("sound-volume");
+
+        let audioContext = null;
+        let masterGain = null;
+        let sources = [];
+        let isPlaying = false;
+
+        function stopAmbience() {
+            sources.forEach(function (source) {
+                try { source.stop(); } catch (error) {}
+            });
+
+            sources = [];
+
+            if (audioContext) {
+                audioContext.close().catch(function () {});
+                audioContext = null;
+            }
+
+            isPlaying = false;
+            if (playButton) playButton.textContent = "▶ Play Ambience";
+        }
+
+        function startAmbience() {
+            if (isPlaying) return;
+
+            const AudioContextClass =
+                window.AudioContext || window.webkitAudioContext;
+
+            if (!AudioContextClass) {
+                alert("Web Audio API is not supported in this browser.");
                 return;
             }
 
-            matches.forEach(function(entry) {
-                var link = document.createElement("a");
-                link.href = entry.dataset.href;
-                link.textContent = entry.dataset.title;
-                link.style.display = "block";
-                link.style.padding = "9px 0";
-                link.style.borderBottom = "1px solid rgba(255,255,255,.08)";
-                searchResults.appendChild(link);
-            });
-        });
-    }
+            audioContext = new AudioContextClass();
+            masterGain = audioContext.createGain();
+            masterGain.gain.value = Number(volumeSlider.value || 25) / 100;
+            masterGain.connect(audioContext.destination);
 
-    // Personalized opener generator.
-    var nameInputs = document.querySelectorAll("[data-name-input]");
-    var openerElements = document.querySelectorAll("[data-opener-template]");
+            const mode = modeSelect.value;
 
-    function personalized(template) {
-        var crush = document.getElementById("crushName");
-        var sender = document.getElementById("yourName");
+            function noiseSource(type, frequency, gainValue) {
+                const length = audioContext.sampleRate * 2;
+                const buffer = audioContext.createBuffer(
+                    1, length, audioContext.sampleRate
+                );
+                const channel = buffer.getChannelData(0);
+                let previous = 0;
 
-        var crushName = crush ? crush.value.trim() : "";
-        var yourName = sender ? sender.value.trim() : "";
+                for (let i = 0; i < length; i++) {
+                    const white = Math.random() * 2 - 1;
+                    if (type === "pink") {
+                        previous = previous * 0.96 + white * 0.04;
+                        channel[i] = previous * 3.5;
+                    } else {
+                        channel[i] = white;
+                    }
+                }
 
-        return template
-            .replace(/\{\{crush\}\}/gi, crushName || "you")
-            .replace(/\{\{your\}\}/gi, yourName || "me");
-    }
+                const source = audioContext.createBufferSource();
+                const filter = audioContext.createBiquadFilter();
+                const gain = audioContext.createGain();
 
-    function refreshOpeners() {
-        openerElements.forEach(function(element) {
-            element.textContent = personalized(
-                element.dataset.openerTemplate || ""
-            );
-        });
+                source.buffer = buffer;
+                source.loop = true;
+                filter.type = "lowpass";
+                filter.frequency.value = frequency;
+                gain.gain.value = gainValue;
 
-        var spotlightTemplate = document.getElementById("spotlightTemplate");
-        var spotlightText = document.getElementById("spotlightText");
-
-        if (spotlightTemplate && spotlightText) {
-            spotlightText.textContent = personalized(
-                spotlightTemplate.value
-            );
-        }
-    }
-
-    nameInputs.forEach(function(input) {
-        input.addEventListener("input", refreshOpeners);
-    });
-
-    // Clipboard with fallback.
-    function copyText(text, button) {
-        function success() {
-            if (!button) return;
-
-            var old = button.textContent;
-            button.textContent = "Copied!";
-
-            setTimeout(function() {
-                button.textContent = old;
-            }, 1500);
-        }
-
-        if (navigator.clipboard && window.isSecureContext) {
-            navigator.clipboard.writeText(text).then(success).catch(function() {
-                fallbackCopy(text, success);
-            });
-        } else {
-            fallbackCopy(text, success);
-        }
-    }
-
-    function fallbackCopy(text, callback) {
-        var textarea = document.createElement("textarea");
-
-        textarea.value = text;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-
-        document.body.appendChild(textarea);
-        textarea.select();
-
-        try {
-            document.execCommand("copy");
-            callback();
-        } catch(e) {}
-
-        textarea.remove();
-    }
-
-    document.querySelectorAll("[data-copy]").forEach(function(button) {
-        button.addEventListener("click", function() {
-            var target = document.getElementById(button.dataset.copy);
-
-            if (!target) return;
-
-            copyText(target.textContent, button);
-        });
-    });
-
-    // Random opener spotlight.
-    var randomButton = document.getElementById("randomOpener");
-
-    if (randomButton) {
-        randomButton.addEventListener("click", function() {
-            var templates = Array.from(openerElements);
-
-            if (!templates.length) return;
-
-            var selected = templates[
-                Math.floor(Math.random() * templates.length)
-            ];
-
-            var spotlight = document.getElementById("spotlightText");
-            var hidden = document.getElementById("spotlightTemplate");
-
-            if (spotlight && hidden) {
-                hidden.value = selected.dataset.openerTemplate || "";
-                spotlight.textContent = personalized(hidden.value);
+                source.connect(filter);
+                filter.connect(gain);
+                gain.connect(masterGain);
+                source.start();
+                sources.push(source);
             }
 
-            var area = document.getElementById("randomSpotlight");
+            function oscillator(freq, waveform, gainValue) {
+                const node = audioContext.createOscillator();
+                const gain = audioContext.createGain();
 
-            if (area) {
-                area.scrollIntoView({
-                    behavior: "smooth",
-                    block: "center"
-                });
+                node.type = waveform;
+                node.frequency.value = freq;
+                gain.gain.value = gainValue;
+                node.connect(gain);
+                gain.connect(masterGain);
+                node.start();
+                sources.push(node);
             }
+
+            if (mode === "rain") {
+                noiseSource("pink", 900, 0.55);
+                noiseSource("white", 420, 0.09);
+                oscillator(110, "sine", 0.035);
+            } else if (mode === "velvet") {
+                noiseSource("pink", 240, 0.16);
+                oscillator(110, "sine", 0.08);
+                oscillator(164.81, "sine", 0.025);
+                oscillator(220, "sine", 0.02);
+            } else {
+                noiseSource("pink", 700, 0.22);
+                oscillator(196, "sine", 0.025);
+                oscillator(246.94, "sine", 0.018);
+            }
+
+            isPlaying = true;
+            playButton.textContent = "Ⅱ Pause Ambience";
+        }
+
+        if (playButton) {
+            playButton.addEventListener("click", function () {
+                if (isPlaying) stopAmbience();
+                else startAmbience();
+            });
+        }
+
+        if (modeSelect) {
+            modeSelect.addEventListener("change", function () {
+                if (isPlaying) {
+                    stopAmbience();
+                    startAmbience();
+                }
+            });
+        }
+
+        if (volumeSlider) {
+            volumeSlider.addEventListener("input", function () {
+                if (masterGain && audioContext) {
+                    masterGain.gain.setTargetAtTime(
+                        Number(volumeSlider.value) / 100,
+                        audioContext.currentTime,
+                        0.05
+                    );
+                }
+            });
+        }
+
+        document.addEventListener("visibilitychange", function () {
+            if (document.hidden && isPlaying) stopAmbience();
+        });
+
+        window.addEventListener("pagehide", function () {
+            if (isPlaying) stopAmbience();
         });
     }
-
-    // Category/topic client-side filter.
-    document.querySelectorAll("[data-filter-input]").forEach(function(input) {
-        var target = input.dataset.filterInput;
-        var items = document.querySelectorAll(
-            "[" + target + "]"
-        );
-
-        input.addEventListener("input", function() {
-            var value = input.value.toLowerCase().trim();
-
-            items.forEach(function(item) {
-                var text = item.getAttribute(target).toLowerCase();
-
-                item.style.display = text.includes(value) ? "" : "none";
-            });
-        });
-    });
-
 })();
-</script>
 """
 
 
 # ============================================================
-# SHARED HTML COMPONENTS
+# SHARED HTML LAYOUT
 # ============================================================
 
-
-def header_html():
-
-    return """
-<header>
-    <div class="container nav">
-        <a class="logo" href="/">FLIRTY<span>CHAT</span></a>
-        <nav class="nav-links">
-            <a href="/">Home</a>
-            <a href="/#categories">Categories</a>
-            <a href="/#newest">Latest Openers</a>
-            <a href="/dmca.html">DMCA</a>
-        </nav>
-    </div>
-</header>
-"""
-
-
-def age_modal():
-
-    return """
-<div class="age-overlay" id="ageOverlay" role="dialog"
-     aria-modal="true" aria-labelledby="ageTitle">
-    <div class="age-box">
-        <div class="eyebrow">18+ ADULT CONTENT</div>
-        <h2 id="ageTitle">Before You Enter...</h2>
-        <p>
-            Flirty Chat Openers is intended exclusively for adults
-            aged 18 and older. By continuing, you confirm that you
-            meet the legal age requirement in your location.
-        </p>
-        <div class="age-buttons">
-            <button class="button" id="ageYes">
-                Yes, I am 18 or older
-            </button>
-            <button class="button secondary" id="ageNo">
-                No, take me back
-            </button>
-        </div>
-    </div>
-</div>
-"""
-
-
-def footer_html():
-
-    return f"""
-<footer>
-    <div class="container footer-grid">
-        <div>
-            <a class="logo" href="/">FLIRTY<span>CHAT</span></a>
-            <p>
-                Your destination for flirty text starters, playful
-                conversation ideas, and creative message inspiration.
-            </p>
-            <p>© <span class="live-year">{CURRENT_YEAR}</span>
-               {SITE_NAME}. All rights reserved.</p>
-        </div>
-
-        <div>
-            <strong>Explore</strong>
-            <a href="/">Home</a>
-            <a href="/#categories">Categories</a>
-            <a href="/#newest">Latest collections</a>
-        </div>
-
-        <div>
-            <strong>Information</strong>
-            <a href="/dmca.html">DMCA Policy</a>
-            <a href="/2257.html">18 U.S.C. § 2257</a>
-            <a href="mailto:{CONTACT_EMAIL}">Contact</a>
-        </div>
-    </div>
-</footer>
-"""
-
-
-def freshness_badge():
-
-    return """
-<div class="eyebrow live-freshness">
-    Tested & Trending
-</div>
-"""
-
-
-def ad_slot(name):
-
-    return f"""
-<div class="ad-slot">
-    <!-- AD_SLOT_{name} -->
-</div>
-"""
-
-
-def page_shell(title, description, canonical, content, extra_head="",
-               body_class=""):
-
-    safe_title = esc(title)
-    safe_description = esc(description)
-    safe_canonical = esc(canonical)
-
+def page_head(title, description, canonical, page_type="website"):
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-
-<title>{safe_title}</title>
-
-<meta name="description" content="{safe_description}">
-<meta name="robots" content="index, follow, max-image-preview:large">
 <meta name="rating" content="RTA-5042-1996-1400-1577-RTA">
-<meta name="theme-color" content="#09080f">
+<title>{esc(title)}</title>
+<meta name="description" content="{esc(truncate(description, 160))}">
+<link rel="canonical" href="{esc(canonical)}">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<meta name="theme-color" content="#0a080d">
 
-<link rel="canonical" href="{safe_canonical}">
+<!-- Google Search Console verification -->
+<meta name="google-site-verification" content="{esc(GOOGLE_VERIFICATION)}">
 
-<meta property="og:type" content="website">
+<!-- Bing Webmaster Tools verification -->
+<meta name="msvalidate.01" content="{esc(BING_VERIFICATION)}">
+
+<meta property="og:type" content="{esc(page_type)}">
 <meta property="og:site_name" content="{esc(SITE_NAME)}">
-<meta property="og:title" content="{safe_title}">
-<meta property="og:description" content="{safe_description}">
-<meta property="og:url" content="{safe_canonical}">
-<meta property="og:locale" content="en_US">
-
+<meta property="og:title" content="{esc(title)}">
+<meta property="og:description" content="{esc(truncate(description, 160))}">
+<meta property="og:url" content="{esc(canonical)}">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="{safe_title}">
-<meta name="twitter:description" content="{safe_description}">
-
-{extra_head}
-
-<style>
-{shared_css()}
-</style>
+<meta name="twitter:title" content="{esc(title)}">
+<meta name="twitter:description" content="{esc(truncate(description, 160))}">
+<style>{CSS}</style>
 </head>
+<body>
+{AD_SLOTS}
+<header class="site-header">
+<div class="container nav">
+<a class="brand" href="{BASE_URL}/">CHARACTER<span>PERSONA</span> HUB</a>
+<nav class="nav-links">
+<a href="{BASE_URL}/">Home</a>
+<a href="{BASE_URL}/#categories">Archetypes</a>
+<a href="{BASE_URL}/#newest">New Personas</a>
+</nav>
+</div>
+</header>
+"""
 
-<body class="{esc(body_class)}">
 
-{header_html()}
+def age_modal():
+    return """
+<div class="age-overlay" id="age-overlay" role="dialog"
+     aria-modal="true" aria-labelledby="age-heading">
+    <div class="age-modal">
+        <span class="eyebrow">Age Confirmation</span>
+        <h2 id="age-heading">Are you 18 or older?</h2>
+        <p>
+            This website contains fictional character concepts and
+            adult-oriented creative themes. You must be at least 18
+            years old to continue.
+        </p>
+        <div class="age-actions">
+            <button class="primary-btn" id="age-yes">Yes, I'm 18+</button>
+            <button class="action-btn" id="age-no">No, Exit</button>
+        </div>
+    </div>
+</div>
+"""
 
-{ad_slot("TOP_BANNER")}
 
-{content}
+def footer():
+    network_html = "\n".join(
+        f'<a href="{esc(url)}" target="_blank" rel="noopener">'
+        f'{esc(name)}</a>'
+        for name, url in NETWORK_SITES
+        if url.rstrip("/") != BASE_URL.rstrip("/")
+    )
 
-{ad_slot("STICKY_FOOTER")}
+    return f"""
+<footer class="site-footer">
+<div class="container">
+<div class="footer-links">
+<a href="{BASE_URL}/">Home</a>
+<a href="{BASE_URL}/dmca.html">DMCA</a>
+<a href="{BASE_URL}/2257.html">18 U.S.C. §2257</a>
+<a href="mailto:{esc(CONTACT_EMAIL)}">Contact</a>
+</div>
 
-{footer_html()}
+<h3>Explore Our Other Projects</h3>
+<p>Discover more tools and creative resources from our network.</p>
+<div class="network-links">
+{network_html}
+</div>
 
+<p>
+&copy; <span class="live-year">{CURRENT_YEAR}</span>
+{esc(SITE_NAME)}. All rights reserved.
+</p>
+<p>
+Independent fictional character-template directory.
+All characters and scenarios are fictional.
+</p>
+</div>
+</footer>
 {age_modal()}
-
-{shared_js()}
-
+<script>{JS}</script>
 </body>
 </html>
 """
 
 
-# ============================================================
-# REUSABLE CONTENT CARDS
-# ============================================================
-
-
-def opener_card(row):
-
-    description = row.get("description") or (
-        "Explore creative flirty messages and conversation starters."
+def page_shell(title, description, canonical, content, page_type="website"):
+    return (
+        page_head(title, description, canonical, page_type)
+        + content
+        + footer()
     )
 
+
+# ============================================================
+# PERSONA CARDS
+# ============================================================
+
+def persona_card(row):
+    tags = " ".join(row["_tags"])
+
     return f"""
-<article class="card">
-    <div class="card-meta">
-        <span class="badge">{esc(row["category"])}</span>
-    </div>
-
-    <h3>
-        <a href="/{esc(row["detail_path"])}">
-            {esc(row["title"])}
-        </a>
-    </h3>
-
-    <p>{esc(description[:180])}</p>
-
-    <div class="card-meta">
-        <span>{len(row["openers"])} messages</span>
-        <span>•</span>
-        <span>{esc(row["subcategory"])}</span>
-    </div>
-
-    <p>
-        <a class="button small" href="/{esc(row["detail_path"])}">
-            Explore Openers →
-        </a>
-    </p>
+<article class="persona-card"
+ data-persona-card
+ data-title="{esc(row['title'])}"
+ data-keyword="{esc(row['target_keyword'])}"
+ data-tags="{esc(tags)}">
+ <div class="card-category">{esc(row['category'])}</div>
+ <h3><a href="{BASE_URL}/persona/{quote(row['slug'])}.html">
+ {esc(row['title'])}</a></h3>
+ <p>{esc(truncate(row['description'], 135))}</p>
+ <div class="card-meta">
+ <span class="pill">{esc(row['subcategory'])}</span>
+ {''.join(f'<span class="pill">{esc(t)}</span>' for t in row['_tags'][:2])}
+ </div>
+ <a class="card-link" href="{BASE_URL}/persona/{quote(row['slug'])}.html">
+ Explore Character &rarr;
+ </a>
 </article>
 """
 
 
-def category_card(name, slug, count):
+def cards_grid(rows):
+    if not rows:
+        return '<div class="empty-state">No character personas found.</div>'
 
-    return f"""
-<a class="card" href="/category/{esc(slug)}/page-1.html">
-    <h3>{esc(name)}</h3>
-    <span class="count">{count} collections</span>
-</a>
-"""
-
-
-def hub_pagination(base_path, current, total):
-
-    if total <= 1:
-        return ""
-
-    previous = ""
-    following = ""
-
-    if current > 1:
-        previous = (
-            f'<a class="button secondary" href="/{base_path}'
-            f'/page-{current - 1}.html">← Previous</a>'
-        )
-
-    if current < total:
-        following = (
-            f'<a class="button" href="/{base_path}'
-            f'/page-{current + 1}.html">Next →</a>'
-        )
-
-    return f"""
-<nav class="pagination" aria-label="Pagination">
-    {previous}
-    <span class="count">Page {current} of {total}</span>
-    {following}
-</nav>
-"""
+    return '<div class="grid">' + "".join(
+        persona_card(row) for row in rows
+    ) + "</div>"
 
 
 # ============================================================
 # HOMEPAGE
 # ============================================================
 
-
-def build_homepage(rows, indexes):
-
-    category_items = []
-
-    for slug, items in sorted(
-        indexes["categories"].items(),
-        key=lambda pair: pair[0]
-    ):
-        name = indexes["category_names"][slug]
-
-        category_items.append(
-            category_card(name, slug, len(items))
-        )
-
-    subcategory_items = []
-
-    for slug, items in sorted(
-        indexes["subcategories"].items(),
-        key=lambda pair: pair[0]
-    ):
-        name = indexes["subcategory_names"][slug]
-
-        subcategory_items.append(f"""
-<a class="pill" href="/topic/{esc(slug)}.html">
-    {esc(name)} ({len(items)})
-</a>
-""")
-
-    tag_items = []
-
-    for slug, items in sorted(
-        indexes["tags"].items(),
-        key=lambda pair: (-len(pair[1]), pair[0])
-    ):
-        name = indexes["tag_names"][slug]
-
-        tag_items.append(f"""
-<a class="pill" href="/tag/{esc(slug)}.html">
-    #{esc(name)} ({len(items)})
-</a>
-""")
-
-    newest = sorted(
-        rows,
-        key=lambda row: row["date_object"],
-        reverse=True
-    )[:NEWEST_ITEMS]
-
-    newest_cards = "".join(
-        opener_card(row) for row in newest
-    )
-
-    search_entries = []
+def build_homepage(rows):
+    categories = defaultdict(list)
+    subcategories = defaultdict(list)
+    tags = defaultdict(list)
 
     for row in rows:
-        searchable = " ".join([
-            row["title"],
-            row["target_keyword"],
-            row["category"],
-            row["subcategory"],
-            " ".join(row["tags_list"]),
-        ]).lower()
+        categories[row["category"]].append(row)
+        subcategories[row["subcategory"]].append(row)
 
-        search_entries.append(f"""
-<div data-search-entry
-     data-title="{esc(row["title"])}"
-     data-href="/{esc(row["detail_path"])}"
-     data-search="{esc(searchable)}"
-     hidden></div>
+        for tag in row["_tags"]:
+            tags[tag].append(row)
+
+    newest = sorted(
+        rows, key=lambda r: r["_date"], reverse=True
+    )[:NEWEST_LIMIT]
+
+    category_cards = []
+
+    for category in sorted(categories, key=str.lower):
+        items = categories[category]
+        category_cards.append(f"""
+<a class="hub-card"
+ href="{BASE_URL}/category/{slugify(category)}/page-1.html">
+ <strong>{esc(category)}</strong>
+ <span class="count">{len(items)} personas</span>
+</a>
 """)
+
+    subcategory_cards = []
+
+    for name in sorted(subcategories, key=str.lower):
+        items = subcategories[name]
+        subcategory_cards.append(f"""
+<a class="subcategory-pill"
+ href="{BASE_URL}/topic/{slugify(name)}.html">
+ {esc(name)} ({len(items)})
+</a>
+""")
+
+    tag_cards = []
+
+    for tag, items in sorted(
+        tags.items(),
+        key=lambda item: (-len(item[1]), item[0].lower())
+    ):
+        tag_cards.append(
+            f'<a href="{BASE_URL}/tag/{slugify(tag)}.html">'
+            f'{esc(tag)} <span class="count">({len(items)})</span></a>'
+        )
 
     content = f"""
 <main>
-
 <section class="hero">
-    <div class="container">
-        {freshness_badge()}
-
-        <h1>
-            Find Your Next
-            <span class="gradient-text">Perfect Flirty Opener</span>
-        </h1>
-
-        <p>
-            Discover clever flirty text starters, playful pick-up
-            lines, late-night replies, and conversation ideas.
-            Personalize messages and find the perfect words to
-            start something interesting.
-        </p>
-
-        <div class="search-box">
-            <input
-                type="search"
-                id="liveSearch"
-                placeholder="Search flirty openers, keywords, and tags..."
-                aria-label="Search flirty openers"
-                autocomplete="off"
-            >
-            <div class="search-results" id="searchResults"></div>
-        </div>
-
-        <p style="margin-top:18px">
-            <span class="badge">
-                Updated <span class="live-year">{CURRENT_YEAR}</span>
-            </span>
-            <span class="badge">Instant Message Inspiration</span>
-            <span class="badge">Personalizable Openers</span>
-        </p>
-    </div>
+<div class="container">
+<span class="eyebrow">The Character Creation Library</span>
+<h1>Build Your Next <span class="gradient-text">
+Unforgettable AI Character</span></h1>
+<p>
+Explore fictional AI companion character cards, personality
+templates, conversation starters, and interactive persona studios.
+Find a character concept and customize it instantly.
+</p>
+<div class="search-wrap">
+<span class="search-icon">&#9906;</span>
+<input id="persona-search" class="search-input"
+ type="search" placeholder="Search characters, keywords, tags..."
+ aria-label="Search character personas">
+</div>
+<p id="search-count">{len(rows)} personas available</p>
+</div>
 </section>
 
 <section class="section" id="categories">
-    <div class="container">
-        <div class="section-heading">
-            <h2>Browse Flirting Categories</h2>
-            <span class="count">
-                {len(indexes["categories"])} unique categories
-            </span>
-        </div>
-
-        <div class="grid">
-            {''.join(category_items) if category_items else '<div class="empty">Categories will appear when content is added.</div>'}
-        </div>
-    </div>
+<div class="container">
+<div class="section-heading">
+<div>
+<h2>Browse Persona Archetypes</h2>
+<p>Explore every character category and its complete collection.</p>
+</div>
+</div>
+<div class="grid">{''.join(category_cards)}</div>
+</div>
 </section>
 
 <section class="section">
-    <div class="container">
-        <div class="section-heading">
-            <h2>Explore Subcategories</h2>
-        </div>
-
-        <div class="tag-cloud">
-            {''.join(subcategory_items) if subcategory_items else '<span class="muted">No subcategories available.</span>'}
-        </div>
-    </div>
+<div class="container">
+<div class="section-heading">
+<div>
+<h2>Explore Character Topics</h2>
+<p>Discover specialized character templates.</p>
+</div>
+</div>
+<div class="tag-cloud">{''.join(subcategory_cards)}</div>
+</div>
 </section>
 
 <section class="section">
-    <div class="container">
-        <div class="section-heading">
-            <h2>Discover Popular Tags</h2>
-        </div>
-
-        <div class="tag-cloud">
-            {''.join(tag_items) if tag_items else '<span class="muted">No tags available.</span>'}
-        </div>
-    </div>
+<div class="container">
+<div class="section-heading">
+<div>
+<h2>Popular Character Tags</h2>
+<p>Browse the library by personality and theme.</p>
+</div>
+</div>
+<div class="tag-cloud">{''.join(tag_cards)}</div>
+</div>
 </section>
-
-{ad_slot("MID_CONTENT")}
 
 <section class="section" id="newest">
-    <div class="container">
-        <div class="section-heading">
-            <h2>Latest Flirty Opener Collections</h2>
-            <span class="count">
-                Newest {len(newest)} collections
-            </span>
-        </div>
-
-        <div class="grid">
-            {newest_cards if newest_cards else '<div class="empty">Your first collection will appear here.</div>'}
-        </div>
-    </div>
+<div class="container">
+<div class="section-heading">
+<div>
+<h2>Discover Character Personas</h2>
+<p>Browse the newest {len(newest)} character concepts in the library.</p>
+</div>
+</div>
+{cards_grid(newest)}
+</div>
 </section>
 
 <section class="section">
-    <div class="container card">
-        <h2>Better Conversations Start With Better Openers</h2>
-
-        <p class="muted">
-            Explore different conversation styles, personalize
-            your favorite messages, and discover new ways to
-            make your conversations more engaging. Whether
-            you prefer playful banter, confident compliments,
-            or thoughtful late-night messages, there is always
-            a new conversation starter to explore.
-        </p>
-
-        <p>
-            Browse our growing library of flirty text starters
-            and find a message that matches your personality.
-        </p>
-    </div>
-</section>
-
-</main>
-
-<div hidden>
-    {''.join(search_entries)}
+<div class="container">
+<div class="panel">
+<h2>What Is Character Persona Hub?</h2>
+<p>
+Character Persona Hub is a searchable collection of fictional
+character profiles and AI conversation templates. Each character
+page provides a customizable biography, personality traits,
+opening dialogue, copy-ready system prompt, and synthesized
+ambient audio.
+</p>
+<p>
+Customize character names, settings, and interaction partners
+to create reusable creative roleplay concepts.
+</p>
 </div>
+</div>
+</section>
+</main>
 """
 
-    description = (
-        "Discover flirty text starters, playful pick-up lines, "
-        "personalized conversation openers, and late-night replies."
-    )
-
     return page_shell(
-        f"{SITE_NAME} - Flirty Text Starters & Conversation Openers",
-        description,
-        absolute_url("index.html"),
-        content,
+        f"{SITE_NAME} | AI Companion Character Cards & Persona Templates",
+        "Discover and customize fictional AI companion character cards, "
+        "personality templates, dialogue hooks and creative persona prompts.",
+        absolute_url("/"),
+        content
     )
 
 
 # ============================================================
-# DETAIL PAGE JSON-LD
+# STRUCTURED DATA
 # ============================================================
 
-
-def detail_schema(row):
-
-    canonical = row["canonical"]
-
-    description = row.get("description") or (
-        f"Explore {row['title']}, a collection of flirty "
-        "conversation starters and message ideas."
+def make_detail_schema(row):
+    canonical = absolute_url(
+        f"/persona/{quote(row['slug'])}.html"
     )
 
     article = {
         "@context": "https://schema.org",
         "@type": "Article",
-        "mainEntityOfPage": {
-            "@type": "WebPage",
-            "@id": canonical,
-        },
         "headline": row["title"],
-        "description": description,
-        "datePublished": row["date_object"].strftime("%Y-%m-%d"),
-        "dateModified": row["date_object"].strftime("%Y-%m-%d"),
-        "author": {
-            "@type": "Organization",
-            "name": SITE_NAME,
-        },
-        "publisher": {
-            "@type": "Organization",
-            "name": SITE_NAME,
-        },
-        "keywords": ", ".join(
-            [row["target_keyword"]] + row["tags_list"]
+        "description": truncate(row["description"], 250),
+        "mainEntityOfPage": canonical,
+        "author": {"@type": "Organization", "name": SITE_NAME},
+        "publisher": {"@type": "Organization", "name": SITE_NAME},
+        "datePublished": (
+            row["_date"].date().isoformat()
+            if row["_date"] != datetime.min else None
         ),
+        "dateModified": datetime.utcnow().date().isoformat(),
+        "articleSection": row["category"],
+        "keywords": row["target_keyword"],
     }
 
     breadcrumb = {
@@ -1678,681 +1138,545 @@ def detail_schema(row):
                 "@type": "ListItem",
                 "position": 1,
                 "name": "Home",
-                "item": absolute_url("index.html"),
+                "item": absolute_url("/")
             },
             {
                 "@type": "ListItem",
                 "position": 2,
                 "name": row["category"],
                 "item": absolute_url(
-                    f"category/{row['category_slug']}/page-1.html"
-                ),
+                    f"/category/{row['_category_slug']}/page-1.html"
+                )
             },
             {
                 "@type": "ListItem",
                 "position": 3,
                 "name": row["title"],
-                "item": canonical,
-            },
-        ],
+                "item": canonical
+            }
+        ]
     }
 
-    questions = []
+    faq_entities = []
 
-    for q, a in [
-        (row.get("faq_q1"), row.get("faq_a1")),
-        (row.get("faq_q2"), row.get("faq_a2")),
+    for question, answer in [
+        (row["faq_q1"], row["faq_a1"]),
+        (row["faq_q2"], row["faq_a2"])
     ]:
-        if q and a:
-            questions.append({
+        if question and answer:
+            faq_entities.append({
                 "@type": "Question",
-                "name": q,
+                "name": question,
                 "acceptedAnswer": {
                     "@type": "Answer",
-                    "text": a,
-                },
+                    "text": answer
+                }
             })
 
-    schemas = [
-        article,
-        breadcrumb,
-    ]
+    schemas = [article, breadcrumb]
 
-    if questions:
+    if faq_entities:
         schemas.append({
             "@context": "https://schema.org",
             "@type": "FAQPage",
-            "mainEntity": questions,
+            "mainEntity": faq_entities
         })
 
     return "\n".join(
         '<script type="application/ld+json">'
-        + json_ld(schema)
+        + safe_json(schema)
         + '</script>'
         for schema in schemas
     )
 
 
 # ============================================================
-# DETAIL PAGE
+# RELATED PERSONAS
 # ============================================================
 
-
-def related_content(row, rows):
-
+def get_related(row, rows):
     candidates = []
+    current_tags = set(row["_tag_slugs"])
 
     for other in rows:
-
         if other["slug"] == row["slug"]:
             continue
 
         same_subcategory = (
-            other["subcategory_slug"] == row["subcategory_slug"]
+            other["_subcategory_slug"] == row["_subcategory_slug"]
         )
-
-        shared_tags = (
-            set(other["tag_slugs"]) & set(row["tag_slugs"])
+        shared_tags = len(
+            current_tags.intersection(set(other["_tag_slugs"]))
         )
-
         same_category = (
-            other["category_slug"] == row["category_slug"]
+            other["_category_slug"] == row["_category_slug"]
         )
 
         score = (
-            (5 if same_subcategory else 0)
-            + (len(shared_tags) * 3)
+            shared_tags * 4
+            + (5 if same_subcategory else 0)
             + (2 if same_category else 0)
         )
 
-        if score > 0:
-            candidates.append((score, other))
+        candidates.append((score, other["_date"], other))
 
     candidates.sort(
-        key=lambda pair: (
-            -pair[0],
-            pair[1]["title"].lower()
-        )
+        key=lambda item: (item[0], item[1]),
+        reverse=True
     )
 
-    selected = [item for score, item in candidates[:RELATED_ITEMS]]
+    return [item[2] for item in candidates[:RELATED_LIMIT]]
 
-    # Fill remaining positions if fewer related matches exist.
-    if len(selected) < RELATED_ITEMS:
-        selected_slugs = {
-            item["slug"] for item in selected
-        }
 
-        for other in rows:
-            if other["slug"] == row["slug"]:
-                continue
-
-            if other["slug"] not in selected_slugs:
-                selected.append(other)
-                selected_slugs.add(other["slug"])
-
-            if len(selected) >= RELATED_ITEMS:
-                break
-
-    return selected
-
+# ============================================================
+# DETAIL PAGES
+# ============================================================
 
 def build_detail_page(row, rows):
+    related = get_related(row, rows)
 
-    opener_cards = []
+    traits = row["_traits"] or [
+        "Creative", "Expressive", "Thoughtful",
+        "Adaptable", "Imaginative"
+    ]
 
-    for index, opener in enumerate(row["openers"], start=1):
-
-        element_id = f"opener-{index}"
-
-        opener_cards.append(f"""
-<div class="opener-card">
-    <div
-        class="opener-text"
-        id="{element_id}"
-        data-opener-template="{esc(opener)}"
-    >{esc(opener)}</div>
-
-    <div class="opener-actions">
-        <button
-            class="button small"
-            data-copy="{element_id}"
-            type="button"
-        >Copy Line</button>
-    </div>
-</div>
-""")
-
-    related = related_content(row, rows)
-
-    related_html = "".join(
-        opener_card(item)
-        for item in related
+    traits_html = "".join(
+        f'<span class="trait-pill">{esc(trait)}</span>'
+        for trait in traits
     )
 
     tags_html = "".join(
-        f'<a class="pill" href="/tag/{esc(tag_slug)}.html">#{esc(tag)}</a>'
-        for tag, tag_slug in zip(
-            row["tags_list"],
-            row["tag_slugs"]
-        )
-    )
-
-    description = row.get("description") or (
-        f"Explore {row['title']} and discover creative "
-        "flirty conversation starters."
-    )
-
-    follow_up = row.get("follow_up_tips") or (
-        "Keep your conversation natural and relaxed. "
-        "Pay attention to the other person's responses, "
-        "ask thoughtful questions, and let the exchange "
-        "develop at a comfortable pace."
+        f'<a class="pill" href="{BASE_URL}/tag/{slugify(tag)}.html">'
+        f'{esc(tag)}</a>'
+        for tag in row["_tags"]
     )
 
     faq_html = ""
 
     for question, answer in [
-        (row.get("faq_q1"), row.get("faq_a1")),
-        (row.get("faq_q2"), row.get("faq_a2")),
+        (row["faq_q1"], row["faq_a1"]),
+        (row["faq_q2"], row["faq_a2"])
     ]:
         if question and answer:
             faq_html += f"""
-<div class="card" style="margin-top:12px">
-    <h3>{esc(question)}</h3>
-    <p>{esc(answer)}</p>
+<div class="faq-item">
+<h3>{esc(question)}</h3>
+<p>{esc(answer)}</p>
 </div>
 """
 
-    content = f"""
-<main>
+    title = row["title"]
+    description = row["description"]
+    canonical = absolute_url(
+        f"/persona/{quote(row['slug'])}.html"
+    )
 
-<div class="container">
+    studio_attributes = (
+        f'data-bio="{esc(row["character_bio"])}" '
+        f'data-opening="{esc(row["opening_line"])}" '
+        f'data-title="{esc(title)}"'
+    )
+
+    content = f"""
+<main class="container">
+<div class="breadcrumbs">
+<a href="{BASE_URL}/">Home</a> /
+<a href="{BASE_URL}/category/{row['_category_slug']}/page-1.html">
+{esc(row['category'])}</a> / {esc(title)}
+</div>
 
 <section class="detail-hero">
-    <div class="breadcrumbs">
-        <a href="/">Home</a> /
-        <a href="/category/{esc(row["category_slug"])}/page-1.html">
-            {esc(row["category"])}
-        </a> /
-        <span>{esc(row["title"])}</span>
-    </div>
-
-    {freshness_badge()}
-
-    <h1>
-        <span class="gradient-text">{esc(row["title"])}</span>
-    </h1>
-
-    <p class="muted">{esc(description)}</p>
-
-    <div class="card-meta">
-        <span class="badge">{esc(row["category"])}</span>
-        <span class="badge">{esc(row["subcategory"])}</span>
-        <span>{len(row["openers"])} message ideas</span>
-    </div>
-
-    <p class="muted">
-        Updated <span class="live-year">{CURRENT_YEAR}</span>
-    </p>
+<span class="eyebrow">{esc(row['category'])}</span>
+<h1>{esc(title)}</h1>
+<p>{esc(description)}</p>
+<div class="card-meta">
+<span class="pill">{esc(row['subcategory'])}</span>
+{tags_html}
+</div>
+<p><span class="status-badge compatibility-status">
+Compatibility Verified: {datetime.utcnow().strftime("%B %Y")}
+</span></p>
 </section>
 
-{ad_slot("MID_CONTENT")}
+<div class="detail-grid">
+<div>
 
-<section class="section">
-    <div class="section-heading">
-        <h2>Your Flirty Message Studio</h2>
-    </div>
+<section class="panel" id="persona-studio" {studio_attributes}>
+<h2>Interactive Persona Customizer</h2>
+<p>
+Personalize this character's identity, interaction partner,
+and fictional environment. Your changes update the character
+profile and opening dialogue instantly.
+</p>
 
-    <div class="card">
-        <h3>Personalize Your Messages</h3>
+<div class="customizer-grid">
+<div class="field">
+<label for="character-name">Character Name</label>
+<input id="character-name" type="text"
+ value="{esc(title)}" maxlength="100">
+</div>
+<div class="field">
+<label for="user-name">User Name</label>
+<input id="user-name" type="text"
+ placeholder="Your name" maxlength="100">
+</div>
+<div class="field">
+<label for="character-setting">Setting</label>
+<input id="character-setting" type="text"
+ placeholder="Enter a fictional setting" maxlength="200">
+</div>
+</div>
 
-        <p class="muted">
-            Add names below to customize supported placeholders
-            in your message templates.
-        </p>
-
-        <div class="customizer">
-            <div>
-                <label for="crushName">Crush Name</label>
-                <input
-                    id="crushName"
-                    data-name-input
-                    type="text"
-                    placeholder="Enter their name"
-                    maxlength="50"
-                >
-            </div>
-
-            <div>
-                <label for="yourName">Your Name</label>
-                <input
-                    id="yourName"
-                    data-name-input
-                    type="text"
-                    placeholder="Enter your name"
-                    maxlength="50"
-                >
-            </div>
-        </div>
-    </div>
-
-    <div class="spotlight" id="randomSpotlight">
-        <span class="badge">RANDOM MESSAGE PICKER</span>
-
-        <h3>Your Next Conversation Starter</h3>
-
-        <div class="spotlight-line" id="spotlightText">
-            Pick a random line to discover your next opener.
-        </div>
-
-        <input
-            type="hidden"
-            id="spotlightTemplate"
-            value=""
-        >
-
-        <button class="button" id="randomOpener" type="button">
-            ✨ Pick Random Line
-        </button>
-
-        <button
-            class="button secondary"
-            data-copy="spotlightText"
-            type="button"
-        >
-            Copy Random Line
-        </button>
-    </div>
-
-    <div class="section-heading">
-        <h2>Message List & Copy Studio</h2>
-        <span class="count">{len(row["openers"])} messages</span>
-    </div>
-
-    <div class="opener-list">
-        {''.join(opener_cards) if opener_cards else '<div class="empty">No individual messages have been supplied for this collection yet.</div>'}
-    </div>
-
-    <div class="affiliate">
-        <span class="badge">CONVERSATION PRACTICE</span>
-
-        <h2>Want to Practice Your Flirting Skills?</h2>
-
-        <p>
-            Explore an AI companion experience and practice
-            conversations whenever inspiration strikes.
-        </p>
-
-        <a
-            class="button"
-            href="{esc(AFFILIATE_URL)}"
-            target="_blank"
-            rel="nofollow sponsored noopener"
-        >
-            {esc(AFFILIATE_CTA_TEXT)} →
-        </a>
-    </div>
-
-    <div class="section-heading">
-        <h2>Follow-Up Coach</h2>
-    </div>
-
-    <details class="strategy">
-        <summary>
-            💬 Expand Your Conversation Strategy
-        </summary>
-
-        <div class="strategy-content">{esc(follow_up)}</div>
-    </details>
+<h3>Customized Character Biography</h3>
+<div class="prompt-output" id="custom-bio"></div>
+<h3>Customized Opening Line</h3>
+<div class="prompt-output" id="custom-opening"></div>
 </section>
 
-<section class="section">
-    <div class="section-heading">
-        <h2>About These Flirty Openers</h2>
-    </div>
-
-    <div class="card">
-        <p>{esc(description)}</p>
-
-        <p>
-            Use these messages as inspiration rather than rigid
-            scripts. Personalize your approach, respect boundaries,
-            and allow the conversation to develop naturally.
-        </p>
-
-        <div class="tag-cloud">
-            {tags_html}
-        </div>
-    </div>
+<section class="panel">
+<h2>Trait Badge Matrix</h2>
+<div class="traits">{traits_html}</div>
+<div class="button-row">
+<button class="action-btn" id="randomize-quirk">
+Randomize Bonus Quirk
+</button>
+</div>
+<p><strong>Bonus Quirk:</strong>
+<span id="bonus-quirk">Discover a surprise character detail.</span></p>
 </section>
 
-<section class="section">
-    <div class="section-heading">
-        <h2>Frequently Asked Questions</h2>
-    </div>
-
-    {faq_html if faq_html else '<div class="empty">More frequently asked questions will be added as this collection grows.</div>'}
+<section class="panel">
+<h2>Copy-Ready Character System Prompt</h2>
+<p>
+Use the generated system prompt in a compatible AI conversation
+platform. Customize the profile before copying.
+</p>
+<div class="button-row">
+<button class="primary-btn" id="copy-system">Copy System Prompt</button>
+<button class="action-btn" id="copy-greeting">Copy Opening Greeting</button>
+<span class="token-badge" id="token-count">Calculating...</span>
+</div>
+<h3>System Prompt Preview</h3>
+<div class="prompt-output" id="system-prompt"></div>
+<h3>Opening Greeting Preview</h3>
+<div class="prompt-output" id="greeting-prompt"></div>
 </section>
 
-<section class="section">
-    <div class="section-heading">
-        <h2>Related Flirty Openers & Replies</h2>
-    </div>
+<section class="panel">
+<h2>Character Mood Ambience</h2>
+<p>
+Generate lightweight atmospheric background audio directly
+in your browser using the Web Audio API.
+</p>
+<div class="audio-controls">
+<button class="action-btn" id="ambience-toggle">▶ Play Ambience</button>
+<select id="sound-mode" aria-label="Sound mode">
+<option value="rain">Midnight Rain</option>
+<option value="velvet">Soft Velvet Hum</option>
+<option value="cafe">Cozy Cafe Murmur</option>
+</select>
+<label for="sound-volume">Volume</label>
+<input type="range" id="sound-volume" min="0" max="100" value="25">
+</div>
+</section>
 
-    <div class="grid">
-        {related_html if related_html else '<div class="empty">Explore more collections from the homepage.</div>'}
-    </div>
+<!-- AD_SLOT_MID_CONTENT -->
+
+<section class="panel">
+<h2>About This Character Persona</h2>
+<p>{esc(description)}</p>
+<h3>Character Background</h3>
+<p>{esc(row['character_bio'])}</p>
+<h3>Personality Characteristics</h3>
+<div class="traits">{traits_html}</div>
+<h3>Opening Dialogue</h3>
+<p>{esc(row['opening_line'])}</p>
+</section>
+
+<section class="panel">
+<h2>Frequently Asked Questions</h2>
+{faq_html if faq_html else '<p>Explore the character sheet to learn more about this fictional persona.</p>'}
 </section>
 
 </div>
+
+<aside>
+<section class="panel">
+<h2>Character Information</h2>
+<p><strong>Category:</strong><br>{esc(row['category'])}</p>
+<p><strong>Subcategory:</strong><br>{esc(row['subcategory'])}</p>
+<p><strong>Primary Keyword:</strong><br>{esc(row['target_keyword'])}</p>
+<p><strong>Published:</strong><br>{esc(row['upload_date'] or 'Evergreen collection')}</p>
+<p><strong>Traits:</strong><br>{len(traits)}</p>
+<p><strong>Tags:</strong><br>{len(row['_tags'])}</p>
+</section>
+
+<section class="affiliate-card">
+<h2>Bring This Character to Life</h2>
+<p>
+Take this customized character concept into a compatible
+AI voice companion platform and explore voice-enabled
+character interactions.
+</p>
+<a class="primary-btn" href="{esc(AFFILIATE_URL)}"
+ rel="nofollow sponsored noopener" target="_blank">
+{esc(AFFILIATE_CTA_TEXT)}
+</a>
+</section>
+</aside>
+</div>
+
+<section class="section">
+<div class="section-heading">
+<div>
+<h2>Related Character Personas</h2>
+<p>Explore similar characters based on shared themes and traits.</p>
+</div>
+</div>
+{cards_grid(related)}
+</section>
 </main>
 """
 
-    extra_head = detail_schema(row)
+    content += make_detail_schema(row)
 
     return page_shell(
-        f"{row['title']} - Flirty Chat Openers",
-        description[:155],
-        row["canonical"],
+        f"{title} | Character Persona Template | {SITE_NAME}",
+        description,
+        canonical,
         content,
-        extra_head=extra_head,
+        "article"
     )
 
 
 # ============================================================
-# PAGINATED CATEGORY HUBS
+# CATEGORY HUBS WITH PAGINATION
 # ============================================================
 
+def build_category_hubs(rows):
+    groups = defaultdict(list)
 
-def build_category_hubs(indexes):
+    for row in rows:
+        groups[row["category"]].append(row)
 
-    for slug, items in indexes["categories"].items():
+    for category, items in groups.items():
+        items.sort(key=lambda r: r["_date"], reverse=True)
 
-        items = sorted(
-            items,
-            key=lambda row: row["date_object"],
-            reverse=True
-        )
-
-        total_pages = max(
-            1,
-            (len(items) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-        )
-
-        name = indexes["category_names"][slug]
+        total_pages = max(1, math.ceil(len(items) / ITEMS_PER_PAGE))
+        category_slug = slugify(category)
 
         for page_number in range(1, total_pages + 1):
-
             start = (page_number - 1) * ITEMS_PER_PAGE
+            page_items = items[start:start + ITEMS_PER_PAGE]
 
-            page_items = items[
-                start:start + ITEMS_PER_PAGE
-            ]
+            current_path = (
+                f"/category/{category_slug}/page-{page_number}.html"
+            )
+            canonical = absolute_url(current_path)
 
-            cards = "".join(
-                opener_card(row)
-                for row in page_items
+            title = (
+                f"{category} Character Personas"
+                + (f" | Page {page_number}" if page_number > 1 else "")
             )
 
-            base_path = f"category/{slug}"
-
-            relative_path = (
-                f"{base_path}/page-{page_number}.html"
+            description = (
+                f"Browse {len(items)} fictional {category.lower()} "
+                f"character personas, AI companion templates, "
+                f"personality profiles, and dialogue starters."
             )
 
-            canonical = absolute_url(relative_path)
+            navigation = []
+            extra_links = ""
 
-            prev_next = ""
+            # Compute URLs separately to avoid nested f-string issues.
+            prev_url = None
+            next_url = None
 
             if page_number > 1:
                 prev_url = absolute_url(
-                    f"{base_path}/page-{page_number - 1}.html"
+                    f"/category/{category_slug}/page-{page_number - 1}.html"
                 )
-
-                prev_next += (
+                navigation.append(
+                    f'<a href="{esc(prev_url)}" rel="prev">Previous</a>'
+                )
+                extra_links += (
                     f'<link rel="prev" href="{esc(prev_url)}">'
                 )
 
             if page_number < total_pages:
                 next_url = absolute_url(
-                    f"{base_path}/page-{page_number + 1}.html"
+                    f"/category/{category_slug}/page-{page_number + 1}.html"
                 )
-
-                prev_next += (
+                navigation.append(
+                    f'<a href="{esc(next_url)}" rel="next">Next</a>'
+                )
+                extra_links += (
                     f'<link rel="next" href="{esc(next_url)}">'
                 )
 
+            pagination = (
+                '<div class="pagination">'
+                + "".join(navigation)
+                + "</div>"
+            )
+
             content = f"""
-<main>
-<div class="container">
-
-<section class="detail-hero">
-    {freshness_badge()}
-
-    <div class="breadcrumbs">
-        <a href="/">Home</a> / {esc(name)}
-    </div>
-
-    <h1>
-        <span class="gradient-text">{esc(name)}</span>
-    </h1>
-
-    <p class="muted">
-        Explore {len(items)} flirty message collections
-        in this category.
-    </p>
-
-    <span class="badge">
-        Page {page_number} of {total_pages}
-    </span>
-</section>
-
-<section class="section">
-    <div class="grid">
-        {cards if cards else '<div class="empty">No collections found.</div>'}
-    </div>
-
-    {hub_pagination(base_path, page_number, total_pages)}
-</section>
-
+<main class="container section">
+<div class="breadcrumbs">
+<a href="{BASE_URL}/">Home</a> / {esc(category)}
 </div>
+<span class="eyebrow">Persona Archetype</span>
+<h1>{esc(title)}</h1>
+<p>{esc(description)}</p>
+<p class="count">{len(items)} total character personas</p>
+{cards_grid(page_items)}
+{pagination}
 </main>
 """
 
-            html_page = page_shell(
-                f"{name} - Flirty Chat Openers | Page {page_number}",
-                f"Browse {len(items)} flirty message collections in {name}.",
+            page = page_shell(
+                f"{title} | {SITE_NAME}",
+                description,
                 canonical,
-                content,
-                extra_head=prev_next,
+                content
             )
+
+            page = page.replace("</head>", extra_links + "\n</head>")
 
             write_file(
                 os.path.join(
-                    OUTPUT_DIR,
-                    relative_path
+                    OUTPUT_DIR, "category", category_slug,
+                    f"page-{page_number}.html"
                 ),
-                html_page,
+                page
             )
 
 
 # ============================================================
-# SUBCATEGORY AND TAG HUBS
+# SUBCATEGORY HUBS
 # ============================================================
 
+def build_topic_hubs(rows):
+    groups = defaultdict(list)
 
-def build_collection_hub(
-    slug,
-    name,
-    items,
-    hub_type,
-):
+    for row in rows:
+        groups[row["subcategory"]].append(row)
 
-    items = sorted(
-        items,
-        key=lambda row: row["date_object"],
-        reverse=True
-    )
+    for name, items in groups.items():
+        items.sort(key=lambda r: r["_date"], reverse=True)
+        topic_slug = slugify(name)
 
-    if hub_type == "topic":
-        relative_path = f"topic/{slug}.html"
-        label = "Flirting Topic"
-        title_prefix = "Explore"
-    else:
-        relative_path = f"tag/{slug}.html"
-        label = "Topic Tag"
-        title_prefix = "Discover"
+        description = (
+            f"Explore {len(items)} fictional character templates "
+            f"in the {name} collection, including AI companion "
+            f"personas and reusable dialogue prompts."
+        )
 
-    cards = "".join(
-        opener_card(row)
-        for row in items
-    )
-
-    content = f"""
-<main>
-<div class="container">
-
-<section class="detail-hero">
-    {freshness_badge()}
-
-    <div class="breadcrumbs">
-        <a href="/">Home</a> / {esc(name)}
-    </div>
-
-    <span class="badge">{label}</span>
-
-    <h1>
-        {title_prefix}
-        <span class="gradient-text">{esc(name)}</span>
-    </h1>
-
-    <p class="muted">
-        Browse {len(items)} collections related to {esc(name)}.
-    </p>
-</section>
-
-<section class="section">
-    <div class="grid">
-        {cards if cards else '<div class="empty">No matching collections yet.</div>'}
-    </div>
-</section>
-
+        content = f"""
+<main class="container section">
+<div class="breadcrumbs">
+<a href="{BASE_URL}/">Home</a> / Topics / {esc(name)}
 </div>
+<span class="eyebrow">Character Topic</span>
+<h1>{esc(name)} Character Templates</h1>
+<p>{esc(description)}</p>
+{cards_grid(items)}
 </main>
 """
 
-    canonical = absolute_url(relative_path)
-
-    description = (
-        f"Discover {len(items)} flirty message collections "
-        f"related to {name}."
-    )
-
-    write_file(
-        os.path.join(OUTPUT_DIR, relative_path),
-        page_shell(
-            f"{name} - {SITE_NAME}",
-            description,
-            canonical,
-            content,
-        ),
-    )
-
-
-def build_topic_and_tag_hubs(indexes):
-
-    for slug, items in indexes["subcategories"].items():
-
-        name = indexes["subcategory_names"][slug]
-
-        build_collection_hub(
-            slug,
-            name,
-            items,
-            "topic",
-        )
-
-    for slug, items in indexes["tags"].items():
-
-        name = indexes["tag_names"][slug]
-
-        build_collection_hub(
-            slug,
-            name,
-            items,
-            "tag",
+        write_file(
+            os.path.join(OUTPUT_DIR, "topic", topic_slug + ".html"),
+            page_shell(
+                f"{name} Character Templates | {SITE_NAME}",
+                description,
+                absolute_url(f"/topic/{topic_slug}.html"),
+                content
+            )
         )
 
 
 # ============================================================
-# LEGAL AND INFORMATION PAGES
+# TAG HUBS
 # ============================================================
 
+def build_tag_hubs(rows):
+    groups = defaultdict(list)
+
+    for row in rows:
+        for tag in row["_tags"]:
+            groups[tag].append(row)
+
+    for tag, items in groups.items():
+        items.sort(key=lambda r: r["_date"], reverse=True)
+        tag_slug = slugify(tag)
+
+        description = (
+            f"Browse {len(items)} character personas tagged "
+            f"{tag}, including fictional personality templates "
+            f"and conversation starters."
+        )
+
+        content = f"""
+<main class="container section">
+<div class="breadcrumbs">
+<a href="{BASE_URL}/">Home</a> / Tags / {esc(tag)}
+</div>
+<span class="eyebrow">Character Tag</span>
+<h1>{esc(tag)} Character Personas</h1>
+<p>{esc(description)}</p>
+{cards_grid(items)}
+</main>
+"""
+
+        write_file(
+            os.path.join(OUTPUT_DIR, "tag", tag_slug + ".html"),
+            page_shell(
+                f"{tag} Character Personas | {SITE_NAME}",
+                description,
+                absolute_url(f"/tag/{tag_slug}.html"),
+                content
+            )
+        )
+
+
+# ============================================================
+# LEGAL PAGES
+# ============================================================
 
 def build_legal_pages():
-
     dmca_content = f"""
-<main>
-<div class="container">
-
-<section class="detail-hero">
-    {freshness_badge()}
-    <h1>DMCA & Copyright Policy</h1>
-
-    <p class="muted">
-        Information about copyright concerns and content removal.
-    </p>
-</section>
-
-<section class="section">
-<div class="card">
-
-<h2>Copyright Complaints</h2>
-
+<main class="container section">
+<span class="eyebrow">Copyright Information</span>
+<h1>DMCA Copyright Policy</h1>
+<div class="panel">
+<h2>Copyright Respect</h2>
 <p>
-{esc(SITE_NAME)} respects intellectual property rights.
-If you believe that material published on this website
-infringes your copyright, you may submit a written notice
-requesting review and removal of the allegedly infringing
-material.
+{esc(SITE_NAME)} respects the intellectual property rights
+of creators and expects users and contributors to do the same.
 </p>
-
-<h2>Required Information</h2>
-
+<h2>Submitting a Copyright Notice</h2>
+<p>
+If you believe material published on this website infringes
+your copyright, send a written notice to:
+</p>
+<p><a href="mailto:{esc(CONTACT_EMAIL)}">{esc(CONTACT_EMAIL)}</a></p>
+<p>Your notice should include:</p>
 <ul>
-<li>Your physical or electronic signature.</li>
 <li>Identification of the copyrighted work.</li>
-<li>Identification of the allegedly infringing material.</li>
+<li>Identification of the allegedly infringing material and its URL.</li>
 <li>Your contact information.</li>
 <li>A statement of good-faith belief that the use is unauthorized.</li>
-<li>A statement that the information in your notice is accurate.</li>
+<li>A statement that the information is accurate and that you are
+authorized to act on behalf of the rights holder.</li>
+<li>Your physical or electronic signature.</li>
 </ul>
-
-<h2>Submit a Notice</h2>
-
+<h2>Review and Response</h2>
 <p>
-Email your complaint to:
-<a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>
+Valid notices will be reviewed. Where appropriate, material may
+be restricted or removed while the matter is investigated.
 </p>
-
-<h2>Review Process</h2>
-
-<p>
-We review properly submitted copyright complaints and
-may remove or restrict access to material where appropriate.
-Please include sufficient details to help identify the
-relevant content.
-</p>
-
-<p>
-Submitting a false or misleading copyright complaint
-may have legal consequences.
-</p>
-
-</div>
-</section>
-
+<h2>Contact</h2>
+<p>{esc(CONTACT_EMAIL)}</p>
 </div>
 </main>
 """
@@ -2360,61 +1684,41 @@ may have legal consequences.
     write_file(
         os.path.join(OUTPUT_DIR, "dmca.html"),
         page_shell(
-            f"DMCA Copyright Policy - {SITE_NAME}",
-            "Read the copyright and DMCA policy for Flirty Chat Openers.",
-            absolute_url("dmca.html"),
-            dmca_content,
-        ),
+            f"DMCA Copyright Policy | {SITE_NAME}",
+            "Copyright and DMCA policy for Character Persona Hub.",
+            absolute_url("/dmca.html"),
+            dmca_content
+        )
     )
 
-    section_2257 = f"""
-<main>
-<div class="container">
-
-<section class="detail-hero">
-    {freshness_badge()}
-    <h1>18 U.S.C. § 2257 Statement</h1>
-</section>
-
-<section class="section">
-<div class="card">
-
-<h2>Website Content Statement</h2>
-
+    section_content = f"""
+<main class="container section">
+<span class="eyebrow">Compliance Information</span>
+<h1>18 U.S.C. §2257 Statement</h1>
+<div class="panel">
+<h2>Nature of Website Content</h2>
 <p>
-{esc(SITE_NAME)} is an informational website providing
-text-based conversation starters, fictional message
-examples, creative writing, and relationship-oriented
-communication ideas.
+{esc(SITE_NAME)} is a fictional character-template and
+creative writing resource. The website publishes text-based
+fictional character descriptions, personality profiles,
+dialogue prompts, and AI companion concepts.
 </p>
-
+<h2>Nature of Materials</h2>
 <p>
-This website does not produce or host explicit visual
-depictions of actual sexually explicit conduct.
+The website does not intentionally publish actual visual
+depictions of sexually explicit conduct. Character profiles
+and dialogue templates are fictional textual materials.
 </p>
-
-<h2>Content and Compliance</h2>
-
+<h2>Age Requirement</h2>
 <p>
-The website is intended for adults aged 18 and older.
-An age confirmation mechanism is provided to restrict
-access to visitors who indicate that they are under 18.
+Access to the website is intended for adults aged 18 or older.
+A browser-based age confirmation is displayed to visitors.
 </p>
-
+<h2>Contact</h2>
 <p>
-For questions about this statement or website content,
-contact:
-<a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>
+For questions about website content or compliance, contact
+<a href="mailto:{esc(CONTACT_EMAIL)}">{esc(CONTACT_EMAIL)}</a>.
 </p>
-
-<p>
-This informational statement is not a legal opinion
-or a substitute for an independent legal compliance review.
-</p>
-
-</div>
-</section>
-
 </div>
 </main>
 """
@@ -2422,11 +1726,11 @@ or a substitute for an independent legal compliance review.
     write_file(
         os.path.join(OUTPUT_DIR, "2257.html"),
         page_shell(
-            f"2257 Compliance Statement - {SITE_NAME}",
-            "Read the 18 U.S.C. Section 2257 website content statement.",
-            absolute_url("2257.html"),
-            section_2257,
-        ),
+            f"18 U.S.C. §2257 Statement | {SITE_NAME}",
+            "Compliance information and statement for Character Persona Hub.",
+            absolute_url("/2257.html"),
+            section_content
+        )
     )
 
 
@@ -2434,83 +1738,42 @@ or a substitute for an independent legal compliance review.
 # XML SITEMAP STYLESHEET
 # ============================================================
 
-
-def build_sitemap_xsl():
-
-    xsl = r"""<?xml version="1.0" encoding="UTF-8"?>
-<xsl:stylesheet version="2.0"
-xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
-xmlns:s="http://www.sitemaps.org/schemas/sitemap/0.9">
-
+SITEMAP_XSL = r"""<?xml version="1.0" encoding="UTF-8"?>
+<xsl:stylesheet version="1.0"
+ xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+ xmlns:s="http://www.sitemaps.org/schemas/sitemap/0.9">
 <xsl:output method="html" encoding="UTF-8" indent="yes"/>
-
 <xsl:template match="/">
-<html>
+<html lang="en">
 <head>
-<title>Website Sitemap</title>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Character Persona Hub — XML Sitemap</title>
 <style>
-body {
-    background:#09080f;
-    color:#f8f5ff;
-    font-family:system-ui,sans-serif;
-    margin:0;
-    padding:35px 18px;
-}
-main {
-    max-width:1000px;
-    margin:auto;
-}
-h1 {color:#ec4899}
-p {color:#aaa1b8}
-table {
-    width:100%;
-    border-collapse:collapse;
-    background:#151221;
-    border-radius:12px;
-    overflow:hidden;
-}
-td,th {
-    padding:13px;
-    text-align:left;
-    border-bottom:1px solid #30283c;
-}
-a {color:#f472b6;overflow-wrap:anywhere}
-th {color:#a5b4fc}
+*{box-sizing:border-box}
+body{margin:0;padding:35px 20px;background:#0a080d;color:#f8f2fa;font-family:Arial,sans-serif}
+main{max-width:1100px;margin:auto}
+h1{color:#fb7185}
+p{color:#aa9eaf}
+table{width:100%;border-collapse:collapse;background:#16111d;border-radius:12px;overflow:hidden}
+th,td{text-align:left;padding:13px;border-bottom:1px solid #302536;font-size:13px}
+th{color:#c4a4ff}
+a{color:#fb8196;text-decoration:none;overflow-wrap:anywhere}
+a:hover{text-decoration:underline}
 </style>
 </head>
-
 <body>
 <main>
-<h1>Flirty Chat Openers Sitemap</h1>
-<p>Explore the indexed website URLs below.</p>
-
+<h1>Character Persona Hub Sitemap</h1>
+<p>Index of published pages.</p>
 <table>
-<thead>
-<tr>
-<th>URL</th>
-<th>Last Modified</th>
-<th>Priority</th>
-</tr>
-</thead>
-<tbody>
-
+<tr><th>URL</th><th>Last Modified</th></tr>
 <xsl:for-each select="s:urlset/s:url">
 <tr>
-<td>
-<a>
-<xsl:attribute name="href">
-<xsl:value-of select="s:loc"/>
-</xsl:attribute>
-<xsl:value-of select="s:loc"/>
-</a>
-</td>
+<td><a href="{s:loc}"><xsl:value-of select="s:loc"/></a></td>
 <td><xsl:value-of select="s:lastmod"/></td>
-<td><xsl:value-of select="s:priority"/></td>
 </tr>
 </xsl:for-each>
-
-</tbody>
 </table>
 </main>
 </body>
@@ -2519,214 +1782,142 @@ th {color:#a5b4fc}
 </xsl:stylesheet>
 """
 
-    write_file(
-        os.path.join(OUTPUT_DIR, "sitemap.xsl"),
-        xsl,
-    )
-
 
 # ============================================================
-# XML SITEMAP GENERATION
+# SITEMAPS
 # ============================================================
 
-
-def build_sitemaps(rows, indexes):
-
-    urls = []
-
-    def add_url(path, priority="0.7", frequency="monthly"):
-
-        urls.append({
-            "loc": absolute_url(path),
-            "lastmod": datetime.utcnow().strftime("%Y-%m-%d"),
-            "priority": priority,
-            "frequency": frequency,
-        })
-
-    add_url("index.html", "1.0", "weekly")
+def build_sitemaps(rows):
+    urls = {absolute_url("/")}
 
     for row in rows:
-        add_url(
-            row["detail_path"],
-            "0.8",
-            "monthly",
+        urls.add(
+            absolute_url(f"/persona/{quote(row['slug'])}.html")
         )
 
-    for slug, items in indexes["categories"].items():
+    category_groups = defaultdict(list)
+    topic_groups = set()
+    tag_groups = set()
 
-        total_pages = max(
-            1,
-            (len(items) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-        )
+    for row in rows:
+        category_groups[row["_category_slug"]].append(row)
+        topic_groups.add(row["_subcategory_slug"])
+        tag_groups.update(row["_tag_slugs"])
 
-        for page_number in range(1, total_pages + 1):
+    for category_slug, items in category_groups.items():
+        pages = max(1, math.ceil(len(items) / ITEMS_PER_PAGE))
 
-            add_url(
-                f"category/{slug}/page-{page_number}.html",
-                "0.8" if page_number == 1 else "0.6",
-                "weekly",
+        for page in range(1, pages + 1):
+            urls.add(
+                absolute_url(
+                    f"/category/{category_slug}/page-{page}.html"
+                )
             )
 
-    for slug in indexes["subcategories"]:
-        add_url(
-            f"topic/{slug}.html",
-            "0.7",
-            "weekly",
-        )
+    for topic in topic_groups:
+        urls.add(absolute_url(f"/topic/{topic}.html"))
 
-    for slug in indexes["tags"]:
-        add_url(
-            f"tag/{slug}.html",
-            "0.6",
-            "weekly",
-        )
+    for tag in tag_groups:
+        urls.add(absolute_url(f"/tag/{tag}.html"))
 
-    add_url("dmca.html", "0.2", "yearly")
-    add_url("2257.html", "0.2", "yearly")
+    urls.update([
+        absolute_url("/dmca.html"),
+        absolute_url("/2257.html"),
+        absolute_url("/404.html"),
+    ])
 
-    # XML sitemap protocol maximum: 50,000 URLs per file.
-    chunk_size = 45000
-
-    chunks = [
-        urls[i:i + chunk_size]
-        for i in range(0, len(urls), chunk_size)
-    ]
-
-    if not chunks:
-        chunks = [[]]
-
-    def xml_escape(value):
-        return (
-            str(value)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&apos;")
-        )
-
-    for number, chunk in enumerate(chunks, start=1):
-
-        entries = []
-
-        for item in chunk:
-
-            entries.append(f"""
-    <url>
-        <loc>{xml_escape(item["loc"])}</loc>
-        <lastmod>{item["lastmod"]}</lastmod>
-        <changefreq>{item["frequency"]}</changefreq>
-        <priority>{item["priority"]}</priority>
-    </url>""")
-
-        sitemap = (
-            '<?xml version="1.0" encoding="UTF-8"?>\n'
-            '<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n'
-            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-            + "\n".join(entries)
-            + "\n</urlset>\n"
-        )
-
-        write_file(
-            os.path.join(
-                OUTPUT_DIR,
-                f"sitemap-{number}.xml"
-            ),
-            sitemap,
-        )
-
-    sitemap_index_entries = []
-
-    for number in range(1, len(chunks) + 1):
-
-        sitemap_index_entries.append(f"""
-    <sitemap>
-        <loc>{xml_escape(absolute_url(f"sitemap-{number}.xml"))}</loc>
-        <lastmod>{datetime.utcnow().strftime("%Y-%m-%d")}</lastmod>
-    </sitemap>""")
-
-    sitemap_index = (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n'
-        '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-        + "\n".join(sitemap_index_entries)
-        + "\n</sitemapindex>\n"
-    )
+    sorted_urls = sorted(urls)
 
     write_file(
-        os.path.join(OUTPUT_DIR, "sitemap.xml"),
-        sitemap_index,
+        os.path.join(OUTPUT_DIR, "sitemap.xsl"),
+        SITEMAP_XSL
     )
 
-    build_sitemap_xsl()
+    sitemap_files = []
+
+    for index in range(0, len(sorted_urls), SITEMAP_LIMIT):
+        batch = sorted_urls[index:index + SITEMAP_LIMIT]
+        number = index // SITEMAP_LIMIT + 1
+
+        xml = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>',
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        ]
+
+        for url in batch:
+            xml.append(
+                "<url>"
+                f"<loc>{html.escape(url)}</loc>"
+                f"<lastmod>{datetime.utcnow().date().isoformat()}</lastmod>"
+                "</url>"
+            )
+
+        xml.append("</urlset>")
+        filename = f"sitemap-{number}.xml"
+
+        write_file(
+            os.path.join(OUTPUT_DIR, filename),
+            "\n".join(xml)
+        )
+        sitemap_files.append(filename)
+
+    if len(sitemap_files) == 1:
+        shutil.copyfile(
+            os.path.join(OUTPUT_DIR, sitemap_files[0]),
+            os.path.join(OUTPUT_DIR, "sitemap.xml")
+        )
+    else:
+        index_xml = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>',
+            '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        ]
+
+        for filename in sitemap_files:
+            index_xml.append(
+                "<sitemap>"
+                f"<loc>{html.escape(absolute_url('/' + filename))}</loc>"
+                f"<lastmod>{datetime.utcnow().date().isoformat()}</lastmod>"
+                "</sitemap>"
+            )
+
+        index_xml.append("</sitemapindex>")
+
+        write_file(
+            os.path.join(OUTPUT_DIR, "sitemap.xml"),
+            "\n".join(index_xml)
+        )
 
 
 # ============================================================
 # ROBOTS.TXT
 # ============================================================
 
-
 def build_robots():
-
-    content = f"""# Robots policy for {SITE_NAME}
-
-User-agent: *
+    content = f"""User-agent: *
 Allow: /
 
 Disallow: /404.html
 
-Sitemap: {absolute_url("sitemap.xml")}
+Sitemap: {BASE_URL}/sitemap.xml
 """
 
-    write_file(
-        os.path.join(OUTPUT_DIR, "robots.txt"),
-        content,
-    )
+    write_file(os.path.join(OUTPUT_DIR, "robots.txt"), content)
 
 
 # ============================================================
-# BUILD INDIVIDUAL DETAIL PAGES
+# 404 PAGE
 # ============================================================
 
-
-def build_detail_pages(rows):
-
-    for index, row in enumerate(rows, start=1):
-
-        output = os.path.join(
-            OUTPUT_DIR,
-            row["detail_path"]
-        )
-
-        html_page = build_detail_page(row, rows)
-
-        write_file(output, html_page)
-
-        if index % 100 == 0:
-            print(
-                f"Generated {index}/{len(rows)} detail pages..."
-            )
-
-
-# ============================================================
-# BUILD ERROR PAGE
-# ============================================================
-
-
-def build_404():
-
+def build_not_found():
     content = """
-<main>
-<div class="container hero">
-    <div class="eyebrow">404 - NOT FOUND</div>
-    <h1>Oops! <span class="gradient-text">Wrong Conversation.</span></h1>
-    <p>
-        This page may have moved or no longer exists.
-        Let's find a better opener.
-    </p>
-    <p>
-        <a href="/" class="button">Back to Homepage</a>
-    </p>
+<main class="container section">
+<div class="panel">
+<span class="eyebrow">404</span>
+<h1>Character Not Found</h1>
+<p>This character page may have moved or no longer exists.</p>
+<a class="primary-btn" href="/">Return to Character Persona Hub</a>
 </div>
 </main>
 """
@@ -2734,148 +1925,208 @@ def build_404():
     write_file(
         os.path.join(OUTPUT_DIR, "404.html"),
         page_shell(
-            f"404 - Page Not Found | {SITE_NAME}",
-            "The requested page could not be found.",
-            absolute_url("404.html"),
-            content,
-        ),
+            f"Page Not Found | {SITE_NAME}",
+            "The requested character persona page could not be found.",
+            absolute_url("/404.html"),
+            content
+        )
     )
 
 
 # ============================================================
-# BUILD SUMMARY
+# CLOUDFLARE SUPPORT FILES
 # ============================================================
 
+def build_hosting_files():
+    headers = """/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: SAMEORIGIN
 
-def print_summary(rows, indexes):
+/*.xml
+  Content-Type: application/xml; charset=utf-8
 
-    total_categories = len(indexes["categories"])
-    total_topics = len(indexes["subcategories"])
-    total_tags = len(indexes["tags"])
+/*.xsl
+  Content-Type: text/xsl; charset=utf-8
+"""
 
-    total_openers = sum(
-        len(row["openers"])
-        for row in rows
-    )
+    redirects = """# Cloudflare Pages uses the generated 404.html automatically.
+"""
 
-    print("\n" + "=" * 58)
-    print(f" {SITE_NAME} - BUILD COMPLETED")
-    print("=" * 58)
-
-    print(f" Website URL:       {BASE_URL}")
-    print(f" Build year:        {CURRENT_YEAR}")
-    print(f" Detail pages:      {len(rows)}")
-    print(f" Total messages:    {total_openers}")
-    print(f" Categories:        {total_categories}")
-    print(f" Subcategories:     {total_topics}")
-    print(f" Unique tags:       {total_tags}")
-    print(f" Output directory:  {OUTPUT_DIR}/")
-
-    print("-" * 58)
-
-    print(" Generated files:")
-    print("   index.html")
-    print("   lines/*.html")
-    print("   category/*/page-*.html")
-    print("   topic/*.html")
-    print("   tag/*.html")
-    print("   sitemap.xml")
-    print("   sitemap-1.xml")
-    print("   sitemap.xsl")
-    print("   robots.txt")
-    print("   dmca.html")
-    print("   2257.html")
-    print("   404.html")
-
-    print("=" * 58)
+    write_file(os.path.join(OUTPUT_DIR, "_headers"), headers)
+    write_file(os.path.join(OUTPUT_DIR, "_redirects"), redirects)
 
 
 # ============================================================
-# MAIN BUILD PIPELINE
+# VALIDATION
 # ============================================================
 
+def validate_generated_site(rows):
+    required_files = [
+        "index.html", "sitemap.xml", "sitemap.xsl",
+        "robots.txt", "dmca.html", "2257.html", "404.html",
+        "_headers", "_redirects",
+    ]
+
+    for filename in required_files:
+        path = os.path.join(OUTPUT_DIR, filename)
+        if not os.path.isfile(path):
+            raise RuntimeError(
+                f"Build validation failed: missing {filename}"
+            )
+
+    homepage_path = os.path.join(OUTPUT_DIR, "index.html")
+
+    with open(homepage_path, "r", encoding="utf-8") as file:
+        homepage = file.read()
+
+    for check in [
+        'id="persona-search"',
+        'id="categories"',
+        GOOGLE_VERIFICATION,
+        BING_VERIFICATION,
+    ]:
+        if check not in homepage:
+            raise RuntimeError(
+                f"Homepage validation failed: missing {check}"
+            )
+
+    # Check that the network footer is present on the homepage.
+    for name, url in NETWORK_SITES:
+        if url.rstrip("/") != BASE_URL.rstrip("/") and url not in homepage:
+            raise RuntimeError(
+                f"Network footer validation failed: missing {name}"
+            )
+
+    for row in rows:
+        path = os.path.join(
+            OUTPUT_DIR, "persona", row["slug"] + ".html"
+        )
+
+        if not os.path.isfile(path):
+            raise RuntimeError(
+                f"Build validation failed: missing persona {row['slug']}"
+            )
+
+        with open(path, "r", encoding="utf-8") as file:
+            content = file.read()
+
+        checks = [
+            "Article",
+            "BreadcrumbList",
+            "persona-studio",
+            "compatibility-status",
+            "randomize-quirk",
+            "copy-system",
+            "copy-greeting",
+            "ambience-toggle",
+            "AD_SLOT_MID_CONTENT",
+            "RTA-5042-1996-1400-1577-RTA",
+            GOOGLE_VERIFICATION,
+            BING_VERIFICATION,
+        ]
+
+        for check in checks:
+            if check not in content:
+                raise RuntimeError(
+                    f"Detail validation failed for {row['slug']}: "
+                    f"missing {check}"
+                )
+
+
+# ============================================================
+# BUILD ENTRY POINT
+# ============================================================
 
 def main():
+    print("=" * 65)
+    print(f" {SITE_NAME}")
+    print(" Static Programmatic SEO Website Generator")
+    print("=" * 65)
 
-    print("\nStarting Flirty Chat Openers website builder...\n")
+    print("\n[1/11] Reading CSV...")
+    rows = read_csv()
+    print(f"      Loaded {len(rows)} character personas.")
 
-    # Load and validate CSV.
-    rows = load_data()
+    print("\n[2/11] Preparing output directory...")
+    make_directory()
 
-    print(f"Loaded {len(rows)} content collections.")
-
-    # Build unique category/topic/tag indexes.
-    indexes = build_indexes(rows)
-
-    # Clean previous generated output.
-    if os.path.isdir(OUTPUT_DIR):
-        shutil.rmtree(OUTPUT_DIR)
-
-    ensure_dir(OUTPUT_DIR)
-
-    # Generate homepage.
-    print("Generating homepage...")
-
-    homepage = build_homepage(rows, indexes)
-
+    print("\n[3/11] Building homepage...")
     write_file(
         os.path.join(OUTPUT_DIR, "index.html"),
-        homepage,
+        build_homepage(rows)
     )
 
-    # Generate collection detail pages.
-    print("Generating detail pages...")
+    print("\n[4/11] Building character detail pages...")
+    for index, row in enumerate(rows, start=1):
+        write_file(
+            os.path.join(
+                OUTPUT_DIR, "persona", row["slug"] + ".html"
+            ),
+            build_detail_page(row, rows)
+        )
 
-    build_detail_pages(rows)
+        if index % 100 == 0:
+            print(f"      Generated {index} detail pages.")
 
-    # Generate category pagination.
-    print("Generating category hubs...")
+    print(f"      Generated {len(rows)} detail pages.")
 
-    build_category_hubs(indexes)
+    print("\n[5/11] Building category hubs...")
+    build_category_hubs(rows)
 
-    # Generate topic and tag hubs.
-    print("Generating subcategory and tag hubs...")
+    print("\n[6/11] Building subcategory hubs...")
+    build_topic_hubs(rows)
 
-    build_topic_and_tag_hubs(indexes)
+    print("\n[7/11] Building tag hubs...")
+    build_tag_hubs(rows)
 
-    # Generate legal pages.
-    print("Generating information pages...")
-
+    print("\n[8/11] Building legal and 404 pages...")
     build_legal_pages()
+    build_not_found()
 
-    # Generate 404.
-    print("Generating 404 page...")
-
-    build_404()
-
-    # Generate sitemap and robots.
-    print("Generating XML sitemaps...")
-
-    build_sitemaps(rows, indexes)
-
-    print("Generating robots.txt...")
-
+    print("\n[9/11] Building sitemaps and robots.txt...")
+    build_sitemaps(rows)
     build_robots()
 
-    # Report.
-    print_summary(rows, indexes)
+    print("\n[10/11] Building hosting support files...")
+    build_hosting_files()
 
-    print("\nBuild successful!")
-    print(
-        "Deploy the contents of the dist/ directory "
-        "to Cloudflare Pages or Workers Static Assets."
+    print("\n[11/11] Validating generated website...")
+    validate_generated_site(rows)
+
+    category_count = len({r["category"] for r in rows})
+    topic_count = len({r["subcategory"] for r in rows})
+    tag_count = len({tag for r in rows for tag in r["_tags"]})
+
+    category_pages = sum(
+        max(1, math.ceil(count / ITEMS_PER_PAGE))
+        for count in Counter(r["category"] for r in rows).values()
     )
+
+    print("\n" + "=" * 65)
+    print(" BUILD COMPLETED SUCCESSFULLY")
+    print("=" * 65)
+    print(f"\nWebsite:        {BASE_URL}")
+    print(f"Output folder:  {os.path.abspath(OUTPUT_DIR)}")
+    print(f"Personas:       {len(rows)}")
+    print(f"Categories:     {category_count}")
+    print(f"Category pages: {category_pages}")
+    print(f"Subcategories:  {topic_count}")
+    print(f"Unique tags:    {tag_count}")
+    print("\nVerification tags: Google + Bing included")
+    print("Network footer: 9 other websites included")
+    print("\nCloudflare deployment:")
+    print("  Build command: python3 build.py")
+    print("  Output folder: dist")
+    print("\n" + "=" * 65)
 
 
 if __name__ == "__main__":
-
     try:
         main()
-
+    except (FileNotFoundError, ValueError, RuntimeError) as error:
+        print(f"\nBUILD ERROR: {error}")
+        raise SystemExit(1)
     except KeyboardInterrupt:
         print("\nBuild interrupted.")
         raise SystemExit(130)
-
-    except Exception as error:
-        print(f"\nBUILD ERROR: {error}")
-        raise
