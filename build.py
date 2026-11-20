@@ -1,4 +1,3 @@
-```python
 #!/usr/bin/env python3
 """
 Character Persona Hub — Static Programmatic SEO Website Generator
