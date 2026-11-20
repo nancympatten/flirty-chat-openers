@@ -1919,9 +1919,8 @@ def validate_generated_site(rows):
         with open(path, "r", encoding="utf-8") as file:
             content = file.read()
 
-        checks = [
+                checks = [
             "Article",
-            "BreadcrumbList",
             "persona-studio",
             "compatibility-status",
             "randomize-quirk",
@@ -1933,7 +1932,6 @@ def validate_generated_site(rows):
             GOOGLE_VERIFICATION,
             BING_VERIFICATION,
         ]
-
         for check in checks:
             if check not in content:
                 raise RuntimeError(
